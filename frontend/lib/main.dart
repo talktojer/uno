@@ -82,7 +82,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _checkGameCode(widget.initialGameCode!);
     }
 
-    // Check URL for game code on web
+    // Check URL for game code on web (for direct navigation)
     _checkUrlForGameCode();
   }
 
@@ -96,12 +96,26 @@ class _HomeScreenState extends State<HomeScreen> {
         final gameCode = pathname.substring(1);
         if (gameCode.length == 5) {
           _gameCodeController.text = gameCode;
+          // Check if this game code is valid and show join dialog
           _checkGameCode(gameCode);
         }
       }
     } catch (e) {
       // Not running on web or error occurred
     }
+  }
+
+  void _clearGameCodeAndReturnHome() {
+    setState(() {
+      _gameCodeController.clear();
+      _gameId = null;
+    });
+
+    // Navigate back to home without game code
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const HomeScreen()),
+    );
   }
 
   Future<void> _checkGameCode(String gameCode) async {
@@ -115,17 +129,203 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _gameId = data['game_id'];
         });
+
+        // If we have a game code from URL, show a dialog to enter player name
+        if (widget.initialGameCode != null ||
+            _gameCodeController.text == gameCode) {
+          _showJoinGameDialog(gameCode, data['game_id']);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Game found: ${data['game_id']}'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.green,
+              shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      // Game code not found or error occurred
+      if (widget.initialGameCode != null) {
+        _showInvalidGameCodeDialog(gameCode);
+      }
+    }
+  }
+
+  void _showInvalidGameCodeDialog(String gameCode) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Invalid Game Code'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('The game code "$gameCode" was not found or is invalid.'),
+              const SizedBox(height: 16),
+              const Text('This could mean:'),
+              const SizedBox(height: 8),
+              const Text('• The game has ended'),
+              const Text('• The game code was mistyped'),
+              const Text('• The game no longer exists'),
+            ],
+          ),
+          actions: [
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _clearGameCodeAndReturnHome();
+              },
+              child: const Text('Go to Home'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showJoinGameDialog(String gameCode, String gameId) {
+    final nameController = TextEditingController();
+    bool isLoading = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Join Game'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('You\'re joining game: $gameCode'),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Your Name',
+                      border: OutlineInputBorder(),
+                      hintText: 'Enter your name to join',
+                    ),
+                    autofocus: true,
+                    textInputAction: TextInputAction.done,
+                    enabled: !isLoading,
+                    onSubmitted: (value) {
+                      if (value.trim().isNotEmpty && !isLoading) {
+                        setDialogState(() {
+                          isLoading = true;
+                        });
+                        Navigator.of(context).pop();
+                        _joinGameDirectly(gameCode, value.trim());
+                      }
+                    },
+                  ),
+                  if (isLoading) ...[
+                    const SizedBox(height: 16),
+                    const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        SizedBox(width: 12),
+                        Text('Joining game...'),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                if (!isLoading) ...[
+                  TextButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      _clearGameCodeAndReturnHome();
+                    },
+                    child: const Text('Cancel'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      if (nameController.text.trim().isNotEmpty) {
+                        setDialogState(() {
+                          isLoading = true;
+                        });
+                        Navigator.of(context).pop();
+                        _joinGameDirectly(gameCode, nameController.text.trim());
+                      }
+                    },
+                    child: const Text('Join Game'),
+                  ),
+                ],
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _joinGameDirectly(String gameCode, String playerName) async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/api/games/join-by-code'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'game_code': gameCode,
+          'player_name': playerName,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+
+        // Navigate directly to game screen
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => GameScreen(
+                gameId: data['game_id'],
+                playerId: data['player_id'],
+                playerName: playerName,
+              ),
+            ),
+          );
+        }
+      } else {
+        final errorData = json.decode(response.body);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Game found: ${data['game_id']}'),
+            content:
+                Text('Error: ${errorData['detail'] ?? 'Failed to join game'}'),
             behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.green,
+            backgroundColor: Colors.red,
             shape: RoundedRectangleBorder(borderRadius: _borderRadius),
           ),
         );
       }
     } catch (e) {
-      // Game code not found or error occurred
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error joining game: $e'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red,
+          shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+        ),
+      );
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 
