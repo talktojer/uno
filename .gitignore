@@ -1,0 +1,9 @@
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/pubspec.lock
+frontend/.dart_tool/package_config_subset
+frontend/.dart_tool/package_config.json
+frontend/.dart_tool/version
+frontend/.dart_tool/dartpad/web_plugin_registrant.dart
+frontend/.dart_tool/extension_discovery/vs_code.json
+frontend/pubspec.lock
