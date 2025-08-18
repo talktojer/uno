@@ -4,7 +4,157 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'dart:html' as html;
+import 'dart:io';
+import 'package:flutter/services.dart';
 import 'config/mobile_theme.dart';
+
+// WebSocket Connection Manager for handling reconnections
+class WebSocketManager {
+  WebSocketChannel? _channel;
+  String? _url;
+  String? _gameId;
+  String? _playerId;
+  Timer? _reconnectTimer;
+  Timer? _pingTimer;
+  bool _isConnecting = false;
+  bool _shouldReconnect = true;
+  int _reconnectAttempts = 0;
+  final int _maxReconnectAttempts = 10;
+  final Duration _reconnectDelay = const Duration(seconds: 2);
+  final Duration _pingInterval = const Duration(seconds: 30);
+
+  // Callbacks
+  Function(Map<String, dynamic>)? onMessage;
+  Function(String)? onError;
+  Function()? onConnected;
+  Function()? onDisconnected;
+
+  bool get isConnected => _channel != null && _channel!.sink != null;
+  bool get isConnecting => _isConnecting;
+
+  void connect(String url, {String? gameId, String? playerId}) {
+    _url = url;
+    _gameId = gameId;
+    _playerId = playerId;
+    _shouldReconnect = true;
+    _reconnectAttempts = 0;
+    _connectInternal();
+  }
+
+  void _connectInternal() {
+    if (_isConnecting || !_shouldReconnect) return;
+
+    _isConnecting = true;
+
+    try {
+      _channel = WebSocketChannel.connect(Uri.parse(_url!));
+
+      _channel!.stream.listen(
+        (data) {
+          try {
+            final message = json.decode(data);
+            onMessage?.call(message);
+          } catch (e) {
+            print('Error parsing WebSocket message: $e');
+          }
+        },
+        onError: (error) {
+          print('WebSocket error: $error');
+          onError?.call(error.toString());
+          _handleDisconnection();
+        },
+        onDone: () {
+          print('WebSocket connection closed');
+          onDisconnected?.call();
+          _handleDisconnection();
+        },
+      );
+
+      _isConnecting = false;
+      _reconnectAttempts = 0;
+      onConnected?.call();
+
+      // Start ping timer
+      _startPingTimer();
+    } catch (e) {
+      print('Error connecting to WebSocket: $e');
+      _isConnecting = false;
+      _handleDisconnection();
+    }
+  }
+
+  void _handleDisconnection() {
+    if (!_shouldReconnect) return;
+
+    _stopPingTimer();
+
+    if (_reconnectAttempts < _maxReconnectAttempts) {
+      _reconnectAttempts++;
+      final delay = Duration(
+        milliseconds:
+            (_reconnectDelay.inMilliseconds * _reconnectAttempts).clamp(
+          1000, // Min 1 second
+          30000, // Max 30 seconds
+        ),
+      );
+
+      print(
+          'Attempting to reconnect in ${delay.inMilliseconds}ms (attempt $_reconnectAttempts/$_maxReconnectAttempts)');
+
+      _reconnectTimer = Timer(delay, () {
+        if (_shouldReconnect) {
+          _connectInternal();
+        }
+      });
+    } else {
+      print('Max reconnection attempts reached. Giving up.');
+      _shouldReconnect = false;
+    }
+  }
+
+  void _startPingTimer() {
+    _pingTimer = Timer.periodic(_pingInterval, (timer) {
+      if (isConnected) {
+        send({'type': 'ping'});
+      }
+    });
+  }
+
+  void _stopPingTimer() {
+    _pingTimer?.cancel();
+    _pingTimer = null;
+  }
+
+  void send(Map<String, dynamic> message) {
+    if (isConnected) {
+      try {
+        _channel!.sink.add(json.encode(message));
+      } catch (e) {
+        print('Error sending WebSocket message: $e');
+        _handleDisconnection();
+      }
+    }
+  }
+
+  void reconnect() {
+    _reconnectAttempts = 0;
+    _shouldReconnect = true;
+    _reconnectTimer?.cancel();
+    _connectInternal();
+  }
+
+  void disconnect() {
+    _shouldReconnect = false;
+    _reconnectTimer?.cancel();
+    _stopPingTimer();
+    _channel?.sink.close();
+    _channel = null;
+  }
+
+  void dispose() {
+    disconnect();
+  }
+}
 
 // API Configuration
 const String apiBaseUrl = 'https://uno-api.jersweb.net';
@@ -57,7 +207,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _playerId;
   bool _isLoading = false;
   List<Map<String, dynamic>> _availableGames = [];
-  WebSocketChannel? _lobbyChannel;
+  WebSocketManager? _lobbyWebSocket;
 
   // Helper method for consistent border radius
   static BorderRadius get _borderRadius => BorderRadius.circular(8);
@@ -67,7 +217,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _playerNameController.dispose();
     _gameIdController.dispose();
     _gameCodeController.dispose();
-    _lobbyChannel?.sink.close();
+    _lobbyWebSocket?.disconnect();
     super.dispose();
   }
 
@@ -333,33 +483,35 @@ class _HomeScreenState extends State<HomeScreen> {
     // Generate a temporary player ID for lobby connection
     final tempPlayerId = 'lobby_${DateTime.now().millisecondsSinceEpoch}';
     final wsUrl = '$wsBaseUrl/ws/lobby/$tempPlayerId';
-    _lobbyChannel = WebSocketChannel.connect(Uri.parse(wsUrl));
+    _lobbyWebSocket = WebSocketManager();
+    _lobbyWebSocket!.connect(wsUrl);
 
-    _lobbyChannel!.stream.listen(
-      (data) {
-        print('Lobby WebSocket received: $data'); // Debug log
-        final message = json.decode(data);
-        if (message['type'] == 'game_list_update') {
-          setState(() {
-            _availableGames = List<Map<String, dynamic>>.from(message['games']);
-          });
-          print('Game list updated: ${message['games']}'); // Debug log
-        } else if (message['type'] == 'pong') {
-          print('Lobby pong received'); // Debug log
-        }
-      },
-      onError: (error) {
-        print('Lobby WebSocket error: $error'); // Debug log
-      },
-      onDone: () {
-        print('Lobby WebSocket connection closed'); // Debug log
-      },
-    );
+    _lobbyWebSocket!.onMessage = (message) {
+      print('Lobby WebSocket received: $message'); // Debug log
+      final messageData = message;
+      if (messageData['type'] == 'game_list_update') {
+        setState(() {
+          _availableGames =
+              List<Map<String, dynamic>>.from(messageData['games']);
+        });
+        print('Game list updated: ${messageData['games']}'); // Debug log
+      } else if (messageData['type'] == 'pong') {
+        print('Lobby pong received'); // Debug log
+      }
+    };
+
+    _lobbyWebSocket!.onError = (error) {
+      print('Lobby WebSocket error: $error'); // Debug log
+    };
+
+    _lobbyWebSocket!.onDisconnected = () {
+      print('Lobby WebSocket connection closed'); // Debug log
+    };
 
     // Send a ping to test the connection
     Timer.periodic(const Duration(seconds: 30), (timer) {
-      if (_lobbyChannel != null) {
-        _lobbyChannel!.sink.add(json.encode({'type': 'ping'}));
+      if (_lobbyWebSocket != null && _lobbyWebSocket!.isConnected) {
+        _lobbyWebSocket!.send({'type': 'ping'});
       }
     });
   }
@@ -1003,11 +1155,14 @@ class GameScreen extends StatefulWidget {
   State<GameScreen> createState() => _GameScreenState();
 }
 
-class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
+class _GameScreenState extends State<GameScreen>
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   Map<String, dynamic>? _gameState;
-  WebSocketChannel? _channel;
+  WebSocketManager? _gameWebSocket;
   late AnimationController _cardAnimationController;
   late Animation<double> _cardAnimation;
+  bool _isConnected = false;
+  bool _isReconnecting = false;
 
   // Helper method for consistent border radius
   static BorderRadius get _borderRadius => BorderRadius.circular(8);
@@ -1015,6 +1170,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _cardAnimationController = AnimationController(
       duration: const Duration(milliseconds: 300),
       vsync: this,
@@ -1028,132 +1184,205 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
-    _channel?.sink.close();
+    WidgetsBinding.instance.removeObserver(this);
+    _gameWebSocket?.disconnect();
     _cardAnimationController.dispose();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+
+    switch (state) {
+      case AppLifecycleState.resumed:
+        print('App resumed - checking WebSocket connection');
+        _checkAndReconnectIfNeeded();
+        break;
+      case AppLifecycleState.paused:
+        print('App paused - maintaining WebSocket connection');
+        // Keep connection alive, don't disconnect
+        break;
+      case AppLifecycleState.inactive:
+        print('App inactive - maintaining WebSocket connection');
+        // Keep connection alive, don't disconnect
+        break;
+      case AppLifecycleState.detached:
+        print('App detached - maintaining WebSocket connection');
+        // Keep connection alive, don't disconnect
+        break;
+      case AppLifecycleState.hidden:
+        print('App hidden - maintaining WebSocket connection');
+        // Keep connection alive, don't disconnect
+        break;
+    }
+  }
+
+  void _checkAndReconnectIfNeeded() {
+    if (_gameWebSocket != null &&
+        !_gameWebSocket!.isConnected &&
+        !_isReconnecting) {
+      print('WebSocket not connected, attempting to reconnect...');
+      _manualReconnect();
+    }
+  }
+
+  void _handleNetworkChange() {
+    // Check connection status when network changes
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted && _gameWebSocket != null && !_gameWebSocket!.isConnected) {
+        print('Network changed, checking WebSocket connection...');
+        _checkAndReconnectIfNeeded();
+      }
+    });
+  }
+
   void _connectWebSocket() {
     final wsUrl = '$wsBaseUrl/ws/${widget.gameId}/${widget.playerId}';
-    _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
+    _gameWebSocket = WebSocketManager();
+    _gameWebSocket!.connect(wsUrl);
 
-    _channel!.stream.listen(
-      (data) {
-        print('WebSocket received: $data'); // Debug log
-        final message = json.decode(data);
-        if (message['type'] == 'game_update') {
-          setState(() {
-            _gameState = message['game_state'];
-          });
-          print('Game state updated: ${message['game_state']}'); // Debug log
-        } else if (message['type'] == 'game_started') {
-          // Don't update game state here - it should come from the game_update message
+    _gameWebSocket!.onMessage = (message) {
+      print('WebSocket received: $message'); // Debug log
+      final messageData = message;
+      if (messageData['type'] == 'game_update') {
+        setState(() {
+          _gameState = messageData['game_state'];
+        });
+        print('Game state updated: ${messageData['game_state']}'); // Debug log
+      } else if (messageData['type'] == 'game_started') {
+        // Don't update game state here - it should come from the game_update message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Game started! ${messageData['message']}'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.green,
+            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+          ),
+        );
+        print('Game started: ${messageData['message']}'); // Debug log
+      } else if (messageData['type'] == 'player_replaced') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${messageData['message']}'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.blue,
+            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+          ),
+        );
+        print('Player replaced: ${messageData['message']}'); // Debug log
+      } else if (messageData['type'] == 'player_disconnected') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${messageData['message']}'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.orange,
+            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+          ),
+        );
+        print('Player disconnected: ${messageData['message']}'); // Debug log
+      } else if (messageData['type'] == 'card_drawn') {
+        // Update game state with the new card drawn information
+        setState(() {
+          _gameState = messageData['game_state'];
+        });
+        print('Card drawn: ${messageData['card']}'); // Debug log
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                'Drew a card: ${messageData['card']['color']} ${messageData['card']['type']}'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.purple,
+            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+          ),
+        );
+      } else if (messageData['type'] == 'card_played') {
+        // Update game state after a card is played
+        setState(() {
+          _gameState = messageData['game_state'];
+        });
+        print('Card played: ${messageData['result']}'); // Debug log
+        if (messageData['result']?['game_over'] == true) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Game started! ${message['message']}'),
+              content:
+                  Text('Game Over! ${messageData['result']['winner']} wins!'),
               behavior: SnackBarBehavior.floating,
-              backgroundColor: Colors.green,
+              backgroundColor: Colors.amber,
               shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+              duration: const Duration(seconds: 5),
             ),
           );
-          print('Game started: ${message['message']}'); // Debug log
-        } else if (message['type'] == 'player_replaced') {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${message['message']}'),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Colors.blue,
-              shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-            ),
-          );
-          print('Player replaced: ${message['message']}'); // Debug log
-        } else if (message['type'] == 'player_disconnected') {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('${message['message']}'),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Colors.orange,
-              shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-            ),
-          );
-          print('Player disconnected: ${message['message']}'); // Debug log
-        } else if (message['type'] == 'card_drawn') {
-          // Update game state with the new card drawn information
-          setState(() {
-            _gameState = message['game_state'];
-          });
-          print('Card drawn: ${message['card']}'); // Debug log
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                  'Drew a card: ${message['card']['color']} ${message['card']['type']}'),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Colors.purple,
-              shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-            ),
-          );
-        } else if (message['type'] == 'card_played') {
-          // Update game state after a card is played
-          setState(() {
-            _gameState = message['game_state'];
-          });
-          print('Card played: ${message['result']}'); // Debug log
-          if (message['result']?['game_over'] == true) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content:
-                    Text('Game Over! ${message['result']['winner']} wins!'),
-                behavior: SnackBarBehavior.floating,
-                backgroundColor: Colors.amber,
-                shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-                duration: const Duration(seconds: 5),
-              ),
-            );
-          }
-        } else if (message['type'] == 'error') {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error: ${message['message']}'),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Colors.red,
-              shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-            ),
-          );
-        } else if (message['type'] == 'pong') {
-          print('Pong received'); // Debug log
-        } else {
-          print('Unknown message type: ${message['type']}'); // Debug log
-          print('Full message: $message'); // Debug log
         }
-      },
-      onError: (error) {
-        print('WebSocket error: $error'); // Debug log
+      } else if (messageData['type'] == 'error') {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('WebSocket error: $error'),
+            content: Text('Error: ${messageData['message']}'),
             behavior: SnackBarBehavior.floating,
             backgroundColor: Colors.red,
             shape: RoundedRectangleBorder(borderRadius: _borderRadius),
           ),
         );
-      },
-      onDone: () {
-        print('WebSocket connection closed'); // Debug log
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Connection closed'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.red,
-            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-          ),
-        );
-      },
-    );
+      } else if (messageData['type'] == 'pong') {
+        print('Pong received'); // Debug log
+      } else {
+        print('Unknown message type: ${messageData['type']}'); // Debug log
+        print('Full message: $messageData'); // Debug log
+      }
+    };
+
+    _gameWebSocket!.onError = (error) {
+      print('WebSocket error: $error'); // Debug log
+      setState(() {
+        _isConnected = false;
+        _isReconnecting = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('WebSocket error: $error'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red,
+          shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+        ),
+      );
+    };
+
+    _gameWebSocket!.onConnected = () {
+      print('WebSocket connected');
+      setState(() {
+        _isConnected = true;
+        _isReconnecting = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Connected to game server'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.green,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      );
+    };
+
+    _gameWebSocket!.onDisconnected = () {
+      print('WebSocket connection closed');
+      setState(() {
+        _isConnected = false;
+        _isReconnecting = true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Connection lost. Attempting to reconnect...'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.orange,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      );
+    };
 
     // Send a ping to test the connection
     Timer.periodic(const Duration(seconds: 30), (timer) {
-      if (_channel != null) {
-        _channel!.sink.add(json.encode({'type': 'ping'}));
+      if (_gameWebSocket != null && _gameWebSocket!.isConnected) {
+        _gameWebSocket!.send({'type': 'ping'});
       }
     });
 
@@ -1185,15 +1414,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _startGame() async {
-    if (_channel != null) {
-      _channel!.sink.add(json.encode({
+    if (_gameWebSocket != null) {
+      _gameWebSocket!.send({
         'type': 'start_game',
-      }));
+      });
     }
   }
 
   Future<void> _playCard(int cardIndex) async {
-    if (_channel != null && _gameState != null) {
+    if (_gameWebSocket != null && _gameState != null) {
       // Check if it's actually my turn
       final players = _gameState!['players'] as List;
       final currentPlayerIndex = _gameState!['current_player_index'] as int;
@@ -1268,11 +1497,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         _cardAnimationController.reverse();
       });
 
-      _channel!.sink.add(json.encode({
+      _gameWebSocket!.send({
         'type': 'play_card',
         'card_index': cardIndex,
         'new_color': newColor,
-      }));
+      });
     }
   }
 
@@ -1346,7 +1575,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _drawCard() async {
-    if (_channel != null && _gameState != null) {
+    if (_gameWebSocket != null && _gameState != null) {
       // Check if it's actually my turn
       final players = _gameState!['players'] as List;
       final currentPlayerIndex = _gameState!['current_player_index'] as int;
@@ -1377,9 +1606,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         return;
       }
 
-      _channel!.sink.add(json.encode({
+      _gameWebSocket!.send({
         'type': 'draw_card',
-      }));
+      });
     }
   }
 
@@ -1747,6 +1976,35 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         elevation: 0,
         centerTitle: true,
         actions: [
+          // Connection status indicator
+          GestureDetector(
+            onTap: _showConnectionDialog,
+            child: Container(
+              margin: const EdgeInsets.only(right: 8),
+              padding: const EdgeInsets.all(4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: _isConnected ? Colors.green : Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  if (_isReconnecting) ...[
+                    const SizedBox(width: 4),
+                    const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
           if (_gameState != null && _gameState!['game_code'] != null)
             IconButton(
               icon: const Icon(Icons.share),
@@ -1765,6 +2023,44 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         child: SafeArea(
           child: Column(
             children: [
+              // Connection status banner
+              if (!_isConnected)
+                Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  color: _isReconnecting ? Colors.orange : Colors.red,
+                  child: Row(
+                    children: [
+                      Icon(
+                        _isReconnecting ? Icons.wifi_find : Icons.wifi_off,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _isReconnecting
+                              ? 'Reconnecting to game server...'
+                              : 'Disconnected from game server',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      if (!_isReconnecting)
+                        TextButton(
+                          onPressed: _manualReconnect,
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                          child: const Text('RECONNECT'),
+                        ),
+                    ],
+                  ),
+                ),
               // Opponent's cards
               Container(
                 padding: const EdgeInsets.all(16),
@@ -2011,6 +2307,93 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           ),
         ),
       ),
+    );
+  }
+
+  void _manualReconnect() {
+    if (_gameWebSocket != null) {
+      setState(() {
+        _isReconnecting = true;
+      });
+      _gameWebSocket!.reconnect();
+    }
+  }
+
+  void _showConnectionDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Connection Status'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: _isConnected ? Colors.green : Colors.red,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _isConnected ? 'Connected' : 'Disconnected',
+                    style: TextStyle(
+                      color: _isConnected ? Colors.green : Colors.red,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+              if (_isReconnecting) ...[
+                const SizedBox(height: 16),
+                const Row(
+                  children: [
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 8),
+                    Text('Reconnecting...'),
+                  ],
+                ),
+              ],
+              if (!_isConnected && !_isReconnecting) ...[
+                const SizedBox(height: 16),
+                const Text(
+                  'Your connection to the game server was lost. This can happen when:',
+                  style: TextStyle(fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                const Text('• You switched to another app',
+                    style: TextStyle(fontSize: 12)),
+                const Text('• Your device went to sleep',
+                    style: TextStyle(fontSize: 12)),
+                const Text('• Network connection changed',
+                    style: TextStyle(fontSize: 12)),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+            if (!_isConnected && !_isReconnecting)
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  _manualReconnect();
+                },
+                child: const Text('Reconnect'),
+              ),
+          ],
+        );
+      },
     );
   }
 }
