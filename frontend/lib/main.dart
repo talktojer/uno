@@ -3,13 +3,13 @@ import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'dart:convert';
 import 'dart:async';
+import 'dart:html' as html;
 import 'config/mobile_theme.dart';
 
 // API Configuration
 const String apiBaseUrl = 'https://uno-api.jersweb.net';
 const String wsBaseUrl = 'wss://uno-api.jersweb.net';
-
-
+const String baseUrl = 'https://uno.jersweb.net';
 
 void main() {
   runApp(const UNOGameApp());
@@ -24,14 +24,26 @@ class UNOGameApp extends StatelessWidget {
       title: 'UNO Game',
       theme: MobileTheme.getLightTheme(),
       darkTheme: MobileTheme.getDarkTheme(),
-      themeMode: ThemeMode.system, // Automatically switch between light/dark based on system
+      themeMode: ThemeMode
+          .system, // Automatically switch between light/dark based on system
       home: const HomeScreen(),
+      onGenerateRoute: (settings) {
+        // Handle game code routes like /ABC12
+        if (settings.name != null && settings.name!.length == 5) {
+          return MaterialPageRoute(
+            builder: (context) => HomeScreen(initialGameCode: settings.name!),
+          );
+        }
+        return null;
+      },
     );
   }
 }
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final String? initialGameCode;
+
+  const HomeScreen({super.key, this.initialGameCode});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -40,6 +52,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _playerNameController = TextEditingController();
   final TextEditingController _gameIdController = TextEditingController();
+  final TextEditingController _gameCodeController = TextEditingController();
   String? _gameId;
   String? _playerId;
   bool _isLoading = false;
@@ -53,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _playerNameController.dispose();
     _gameIdController.dispose();
+    _gameCodeController.dispose();
     _lobbyChannel?.sink.close();
     super.dispose();
   }
@@ -61,6 +75,58 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _connectLobbyWebSocket();
+
+    // Handle initial game code from URL
+    if (widget.initialGameCode != null) {
+      _gameCodeController.text = widget.initialGameCode!;
+      _checkGameCode(widget.initialGameCode!);
+    }
+
+    // Check URL for game code on web
+    _checkUrlForGameCode();
+  }
+
+  void _checkUrlForGameCode() {
+    try {
+      final uri = html.window.location;
+      final pathname = uri.pathname;
+      if (pathname != null &&
+          pathname.length == 6 &&
+          pathname.startsWith('/')) {
+        final gameCode = pathname.substring(1);
+        if (gameCode.length == 5) {
+          _gameCodeController.text = gameCode;
+          _checkGameCode(gameCode);
+        }
+      }
+    } catch (e) {
+      // Not running on web or error occurred
+    }
+  }
+
+  Future<void> _checkGameCode(String gameCode) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$apiBaseUrl/api/games/code/$gameCode'),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        setState(() {
+          _gameId = data['game_id'];
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Game found: ${data['game_id']}'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.green,
+            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+          ),
+        );
+      }
+    } catch (e) {
+      // Game code not found or error occurred
+    }
   }
 
   void _connectLobbyWebSocket() {
@@ -68,7 +134,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final tempPlayerId = 'lobby_${DateTime.now().millisecondsSinceEpoch}';
     final wsUrl = '$wsBaseUrl/ws/lobby/$tempPlayerId';
     _lobbyChannel = WebSocketChannel.connect(Uri.parse(wsUrl));
-    
+
     _lobbyChannel!.stream.listen(
       (data) {
         print('Lobby WebSocket received: $data'); // Debug log
@@ -89,7 +155,7 @@ class _HomeScreenState extends State<HomeScreen> {
         print('Lobby WebSocket connection closed'); // Debug log
       },
     );
-    
+
     // Send a ping to test the connection
     Timer.periodic(const Duration(seconds: 30), (timer) {
       if (_lobbyChannel != null) {
@@ -98,24 +164,23 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-
-
   Future<void> _createGame() async {
     setState(() {
       _isLoading = true;
     });
 
     try {
-      final response = await http.post(Uri.parse('$apiBaseUrl/api/games/create'));
+      final response =
+          await http.post(Uri.parse('$apiBaseUrl/api/games/create'));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         setState(() {
           _gameId = data['game_id'];
-          _gameIdController.text = data['game_id'];
+          _gameCodeController.text = data['game_code'];
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Game created: ${data['game_id']}'),
+            content: Text('Game created: ${data['game_code']}'),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: _borderRadius),
           ),
@@ -161,14 +226,14 @@ class _HomeScreenState extends State<HomeScreen> {
         headers: {'Content-Type': 'application/json'},
         body: json.encode({'player_name': _playerNameController.text}),
       );
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         setState(() {
           _playerId = data['player_id'];
           _gameId = _gameIdController.text;
         });
-        
+
         // Navigate to game screen
         if (mounted) {
           Navigator.pushReplacement(
@@ -186,7 +251,84 @@ class _HomeScreenState extends State<HomeScreen> {
         final errorData = json.decode(response.body);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: ${errorData['detail'] ?? 'Failed to join game'}'),
+            content:
+                Text('Error: ${errorData['detail'] ?? 'Failed to join game'}'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.red,
+            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error joining game: $e'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red,
+          shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+        ),
+      );
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _joinGameByCode() async {
+    if (_gameCodeController.text.isEmpty ||
+        _playerNameController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Please enter both game code and your name'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.orange,
+          shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/api/games/join-by-code'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'game_code': _gameCodeController.text,
+          'player_name': _playerNameController.text,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        setState(() {
+          _playerId = data['player_id'];
+          _gameId = data['game_id'];
+        });
+
+        // Navigate to game screen
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => GameScreen(
+                gameId: _gameId!,
+                playerId: _playerId!,
+                playerName: _playerNameController.text,
+              ),
+            ),
+          );
+        }
+      } else {
+        final errorData = json.decode(response.body);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content:
+                Text('Error: ${errorData['detail'] ?? 'Failed to join game'}'),
             behavior: SnackBarBehavior.floating,
             backgroundColor: Colors.red,
             shape: RoundedRectangleBorder(borderRadius: _borderRadius),
@@ -213,7 +355,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
     final isSmallScreen = screenSize.width < 600;
-    
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('UNO Game'),
@@ -280,9 +422,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                         ),
-                        
+
                         const SizedBox(height: 30),
-                        
+
                         // Player Name Input
                         TextField(
                           controller: _playerNameController,
@@ -294,10 +436,26 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           textInputAction: TextInputAction.next,
                         ),
-                        
+
                         const SizedBox(height: 20),
-                        
-                        // Game ID Input
+
+                        // Game Code Input
+                        TextField(
+                          controller: _gameCodeController,
+                          decoration: const InputDecoration(
+                            labelText: 'Game Code (5 characters)',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.qr_code),
+                            hintText: 'Enter 5-character game code',
+                          ),
+                          textInputAction: TextInputAction.done,
+                          maxLength: 5,
+                          textCapitalization: TextCapitalization.characters,
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        // Game ID Input (for backward compatibility)
                         TextField(
                           controller: _gameIdController,
                           decoration: const InputDecoration(
@@ -308,9 +466,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           textInputAction: TextInputAction.done,
                         ),
-                        
+
                         const SizedBox(height: 30),
-                        
+
                         // Action Buttons
                         if (isSmallScreen) ...[
                           // Stacked buttons for small screens
@@ -320,7 +478,24 @@ class _HomeScreenState extends State<HomeScreen> {
                                 width: double.infinity,
                                 child: ElevatedButton(
                                   onPressed: _isLoading ? null : _createGame,
-                                  child: Text(_isLoading ? 'Creating...' : 'Create Game'),
+                                  child: Text(_isLoading
+                                      ? 'Creating...'
+                                      : 'Create Game'),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  onPressed:
+                                      _isLoading ? null : _joinGameByCode,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    foregroundColor: Colors.white,
+                                  ),
+                                  child: Text(_isLoading
+                                      ? 'Joining...'
+                                      : 'Join by Code'),
                                 ),
                               ),
                               const SizedBox(height: 16),
@@ -329,10 +504,12 @@ class _HomeScreenState extends State<HomeScreen> {
                                 child: ElevatedButton(
                                   onPressed: _isLoading ? null : _joinGame,
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.green,
+                                    backgroundColor: Colors.blue,
                                     foregroundColor: Colors.white,
                                   ),
-                                  child: Text(_isLoading ? 'Joining...' : 'Join Game'),
+                                  child: Text(_isLoading
+                                      ? 'Joining...'
+                                      : 'Join by Game ID'),
                                 ),
                               ),
                             ],
@@ -344,25 +521,44 @@ class _HomeScreenState extends State<HomeScreen> {
                               Expanded(
                                 child: ElevatedButton(
                                   onPressed: _isLoading ? null : _createGame,
-                                  child: Text(_isLoading ? 'Creating...' : 'Create Game'),
+                                  child: Text(_isLoading
+                                      ? 'Creating...'
+                                      : 'Create Game'),
                                 ),
                               ),
                               const SizedBox(width: 20),
                               Expanded(
                                 child: ElevatedButton(
-                                  onPressed: _isLoading ? null : _joinGame,
+                                  onPressed:
+                                      _isLoading ? null : _joinGameByCode,
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.green,
                                     foregroundColor: Colors.white,
                                   ),
-                                  child: Text(_isLoading ? 'Joining...' : 'Join Game'),
+                                  child: Text(_isLoading
+                                      ? 'Joining...'
+                                      : 'Join by Code'),
                                 ),
                               ),
                             ],
                           ),
+                          const SizedBox(height: 20),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: _isLoading ? null : _joinGame,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.blue,
+                                foregroundColor: Colors.white,
+                              ),
+                              child: Text(_isLoading
+                                  ? 'Joining...'
+                                  : 'Join by Game ID'),
+                            ),
+                          ),
                         ],
-                        
-                        // Game ID Display
+
+                        // Game Code Display
                         if (_gameId != null) ...[
                           const SizedBox(height: 20),
                           Container(
@@ -372,26 +568,77 @@ class _HomeScreenState extends State<HomeScreen> {
                               borderRadius: BorderRadius.circular(12),
                               border: Border.all(color: Colors.green),
                             ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
+                            child: Column(
                               children: [
-                                const Icon(Icons.check_circle, color: Colors.green),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(Icons.check_circle,
+                                        color: Colors.green),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Game Code: ${_gameCodeController.text}',
+                                      style: const TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.green,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  'Game ID: $_gameId',
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.green,
+                                  'Share this code with others to join your game!',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.green[700],
                                   ),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      'Full URL: $baseUrl/${_gameCodeController.text}',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Colors.green[600],
+                                        fontFamily: 'monospace',
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    IconButton(
+                                      icon: const Icon(Icons.copy,
+                                          color: Colors.green),
+                                      onPressed: () {
+                                        // Copy to clipboard
+                                        final url =
+                                            '$baseUrl/${_gameCodeController.text}';
+                                        html.window.navigator.clipboard
+                                            ?.writeText(url);
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          SnackBar(
+                                            content: const Text(
+                                                'Game URL copied to clipboard!'),
+                                            behavior: SnackBarBehavior.floating,
+                                            backgroundColor: Colors.green,
+                                            shape: RoundedRectangleBorder(
+                                                borderRadius: _borderRadius),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
                           ),
                         ],
-                        
+
                         const SizedBox(height: 30),
-                        
+
                         // Available Games Section
                         if (_availableGames.isNotEmpty) ...[
                           Container(
@@ -427,29 +674,95 @@ class _HomeScreenState extends State<HomeScreen> {
                                     itemBuilder: (context, index) {
                                       final game = _availableGames[index];
                                       return Card(
-                                        margin: const EdgeInsets.only(bottom: 8),
+                                        margin:
+                                            const EdgeInsets.only(bottom: 8),
                                         child: ListTile(
                                           title: Text(
-                                            'Game: ${game['game_id']}',
-                                            style: const TextStyle(fontWeight: FontWeight.w600),
+                                            'Game Code: ${game['game_code'] ?? 'N/A'}',
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.w600),
                                           ),
-                                          subtitle: Text(
-                                            'Status: ${game['status']} (${game['active_players'] ?? game['player_count']}/2 players)',
+                                          subtitle: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                'Status: ${game['status']} (${game['active_players'] ?? game['player_count']}/2 players)',
+                                              ),
+                                              if (game['game_id'] != null)
+                                                Text(
+                                                  'Game ID: ${game['game_id']}',
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: Colors.grey[600],
+                                                    fontFamily: 'monospace',
+                                                  ),
+                                                ),
+                                            ],
                                           ),
-                                          trailing: (game['status'] == 'waiting' || game['status'] == 'waiting_for_replacement')
-                                              ? IconButton(
-                                                  icon: const Icon(Icons.play_arrow, color: Colors.green),
-                                                  onPressed: () {
-                                                    _gameIdController.text = game['game_id'];
-                                                    ScaffoldMessenger.of(context).showSnackBar(
-                                                      SnackBar(
-                                                        content: Text('Game ID ${game['game_id']} copied to input field'),
-                                                        behavior: SnackBarBehavior.floating,
-                                                        backgroundColor: Colors.green,
-                                                        shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-                                                      ),
-                                                    );
-                                                  },
+                                          trailing: (game['status'] ==
+                                                      'waiting' ||
+                                                  game['status'] ==
+                                                      'waiting_for_replacement')
+                                              ? Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    IconButton(
+                                                      icon: const Icon(
+                                                          Icons.copy,
+                                                          color: Colors.blue),
+                                                      onPressed: () {
+                                                        _gameCodeController
+                                                                .text =
+                                                            game['game_code'] ??
+                                                                '';
+                                                        ScaffoldMessenger.of(
+                                                                context)
+                                                            .showSnackBar(
+                                                          SnackBar(
+                                                            content: Text(
+                                                                'Game code ${game['game_code']} copied to input field'),
+                                                            behavior:
+                                                                SnackBarBehavior
+                                                                    .floating,
+                                                            backgroundColor:
+                                                                Colors.blue,
+                                                            shape: RoundedRectangleBorder(
+                                                                borderRadius:
+                                                                    _borderRadius),
+                                                          ),
+                                                        );
+                                                      },
+                                                    ),
+                                                    IconButton(
+                                                      icon: const Icon(
+                                                          Icons.play_arrow,
+                                                          color: Colors.green),
+                                                      onPressed: () {
+                                                        _gameCodeController
+                                                                .text =
+                                                            game['game_code'] ??
+                                                                '';
+                                                        ScaffoldMessenger.of(
+                                                                context)
+                                                            .showSnackBar(
+                                                          SnackBar(
+                                                            content: Text(
+                                                                'Game code ${game['game_code']} copied to input field'),
+                                                            behavior:
+                                                                SnackBarBehavior
+                                                                    .floating,
+                                                            backgroundColor:
+                                                                Colors.green,
+                                                            shape: RoundedRectangleBorder(
+                                                                borderRadius:
+                                                                    _borderRadius),
+                                                          ),
+                                                        );
+                                                      },
+                                                    ),
+                                                  ],
                                                 )
                                               : null,
                                         ),
@@ -523,7 +836,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   void _connectWebSocket() {
     final wsUrl = '$wsBaseUrl/ws/${widget.gameId}/${widget.playerId}';
     _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
-    
+
     _channel!.stream.listen(
       (data) {
         print('WebSocket received: $data'); // Debug log
@@ -572,7 +885,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           print('Card drawn: ${message['card']}'); // Debug log
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Drew a card: ${message['card']['color']} ${message['card']['type']}'),
+              content: Text(
+                  'Drew a card: ${message['card']['color']} ${message['card']['type']}'),
               behavior: SnackBarBehavior.floating,
               backgroundColor: Colors.purple,
               shape: RoundedRectangleBorder(borderRadius: _borderRadius),
@@ -587,7 +901,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           if (message['result']?['game_over'] == true) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Game Over! ${message['result']['winner']} wins!'),
+                content:
+                    Text('Game Over! ${message['result']['winner']} wins!'),
                 behavior: SnackBarBehavior.floating,
                 backgroundColor: Colors.amber,
                 shape: RoundedRectangleBorder(borderRadius: _borderRadius),
@@ -634,14 +949,14 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         );
       },
     );
-    
+
     // Send a ping to test the connection
     Timer.periodic(const Duration(seconds: 30), (timer) {
       if (_channel != null) {
         _channel!.sink.add(json.encode({'type': 'ping'}));
       }
     });
-    
+
     // Fallback: fetch initial game state via HTTP if WebSocket doesn't provide it
     Timer(const Duration(seconds: 2), () {
       if (_gameState == null) {
@@ -650,13 +965,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       }
     });
   }
-  
+
   Future<void> _fetchGameStateFallback() async {
     try {
       final response = await http.get(
         Uri.parse('$apiBaseUrl/api/games/${widget.gameId}'),
       );
-      
+
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         setState(() {
@@ -683,7 +998,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       final players = _gameState!['players'] as List;
       final currentPlayerIndex = _gameState!['current_player_index'] as int;
       final isMyTurn = players[currentPlayerIndex]['id'] == widget.playerId;
-      
+
       if (!isMyTurn) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -695,7 +1010,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         );
         return;
       }
-      
+
       // Check if game is started and active
       if (!_gameState!['game_started'] || _gameState!['winner'] != null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -708,13 +1023,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         );
         return;
       }
-      
+
       // Check if the card is actually playable
       final myPlayer = players.firstWhere(
         (p) => p['id'] == widget.playerId,
         orElse: () => null,
       );
-      
+
       if (myPlayer == null || cardIndex >= myPlayer['cards'].length) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -726,7 +1041,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         );
         return;
       }
-      
+
       final card = myPlayer['cards'][cardIndex];
       if (!_isCardPlayable(card, _gameState!)) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -739,7 +1054,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         );
         return;
       }
-      
+
       // Handle wild card color selection
       String? newColor;
       if (card['type'] == 'wild' || card['type'] == 'wild_draw4') {
@@ -748,11 +1063,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           return; // User cancelled color selection
         }
       }
-      
+
       _cardAnimationController.forward().then((_) {
         _cardAnimationController.reverse();
       });
-      
+
       _channel!.sink.add(json.encode({
         'type': 'play_card',
         'card_index': cardIndex,
@@ -773,8 +1088,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             children: [
               ListTile(
                 leading: Container(
-                  width: 30, 
-                  height: 30, 
+                  width: 30,
+                  height: 30,
                   decoration: BoxDecoration(
                     color: Colors.red,
                     borderRadius: BorderRadius.circular(15),
@@ -786,8 +1101,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               ),
               ListTile(
                 leading: Container(
-                  width: 30, 
-                  height: 30, 
+                  width: 30,
+                  height: 30,
                   decoration: BoxDecoration(
                     color: Colors.blue,
                     borderRadius: BorderRadius.circular(15),
@@ -799,8 +1114,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               ),
               ListTile(
                 leading: Container(
-                  width: 30, 
-                  height: 30, 
+                  width: 30,
+                  height: 30,
                   decoration: BoxDecoration(
                     color: Colors.green,
                     borderRadius: BorderRadius.circular(15),
@@ -812,8 +1127,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               ),
               ListTile(
                 leading: Container(
-                  width: 30, 
-                  height: 30, 
+                  width: 30,
+                  height: 30,
                   decoration: BoxDecoration(
                     color: Colors.yellow,
                     borderRadius: BorderRadius.circular(15),
@@ -836,7 +1151,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       final players = _gameState!['players'] as List;
       final currentPlayerIndex = _gameState!['current_player_index'] as int;
       final isMyTurn = players[currentPlayerIndex]['id'] == widget.playerId;
-      
+
       if (!isMyTurn) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -848,7 +1163,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         );
         return;
       }
-      
+
       // Check if game is started and active
       if (!_gameState!['game_started'] || _gameState!['winner'] != null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -861,11 +1176,74 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         );
         return;
       }
-      
+
       _channel!.sink.add(json.encode({
         'type': 'draw_card',
       }));
     }
+  }
+
+  void _showShareDialog() {
+    if (_gameState == null || _gameState!['game_code'] == null) return;
+
+    final gameCode = _gameState!['game_code'];
+    final shareUrl = '$baseUrl/$gameCode';
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Share Game'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Game Code: $gameCode'),
+              const SizedBox(height: 16),
+              Text('Share this URL with others:'),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: Colors.grey),
+                ),
+                child: SelectableText(
+                  shareUrl,
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                // Copy to clipboard
+                html.window.navigator.clipboard?.writeText(shareUrl);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: const Text('Game URL copied to clipboard!'),
+                    behavior: SnackBarBehavior.floating,
+                    backgroundColor: Colors.green,
+                    shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+                  ),
+                );
+                Navigator.of(context).pop();
+              },
+              child: const Text('Copy URL'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Color _getColorFromString(String colorString) {
@@ -885,56 +1263,60 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     }
   }
 
-  bool _isCardPlayable(Map<String, dynamic> card, Map<String, dynamic> gameState) {
+  bool _isCardPlayable(
+      Map<String, dynamic> card, Map<String, dynamic> gameState) {
     if (!gameState['game_started'] || gameState['winner'] != null) {
       return false;
     }
-    
+
     final players = gameState['players'] as List;
     final currentPlayerIndex = gameState['current_player_index'] as int;
     final myPlayer = players.firstWhere(
       (p) => p['id'] == widget.playerId,
       orElse: () => null,
     );
-    
+
     if (myPlayer == null) return false;
-    
+
     // Check if it's my turn
     if (players[currentPlayerIndex]['id'] != widget.playerId) {
       return false;
     }
-    
+
     final currentColor = gameState['current_color'];
     final discardPile = gameState['discard_pile'] as List;
-    
+
     if (discardPile.isEmpty) return true;
-    
+
     final topCard = discardPile.last;
-    
+
     // Wild cards can always be played
     if (card['type'] == 'wild' || card['type'] == 'wild_draw4') {
       return true;
     }
-    
+
     // Check color match
     if (card['color'] == currentColor) {
       return true;
     }
-    
+
     // Check value match for number cards
-    if (card['type'] == 'number' && topCard['type'] == 'number' && card['value'] == topCard['value']) {
+    if (card['type'] == 'number' &&
+        topCard['type'] == 'number' &&
+        card['value'] == topCard['value']) {
       return true;
     }
-    
+
     // Check type match for action cards
     if (card['type'] != 'number' && card['type'] == topCard['type']) {
       return true;
     }
-    
+
     return false;
   }
 
-  Widget _buildCard(Map<String, dynamic> card, {bool isPlayable = false, VoidCallback? onTap}) {
+  Widget _buildCard(Map<String, dynamic> card,
+      {bool isPlayable = false, VoidCallback? onTap}) {
     Color cardColor;
     String cardText;
     IconData? cardIcon;
@@ -986,7 +1368,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     }
 
     return GestureDetector(
-      onTap: isPlayable ? onTap : null,  // Only allow tap if card is playable
+      onTap: isPlayable ? onTap : null, // Only allow tap if card is playable
       child: AnimatedBuilder(
         animation: _cardAnimation,
         builder: (context, child) {
@@ -1059,13 +1441,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       (p) => p['id'] == widget.playerId,
       orElse: () => null,
     );
-    
+
     // Find the opponent (the other player)
     final opponent = players.firstWhere(
       (p) => p['id'] != widget.playerId,
       orElse: () => null,
     );
-    
+
     // Check if it's my turn
     final isMyTurn = currentPlayer['id'] == widget.playerId;
 
@@ -1109,18 +1491,24 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                           const SizedBox(height: 20),
                           Text(
                             'Game Over!',
-                            style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                              color: Colors.black87,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            style: Theme.of(context)
+                                .textTheme
+                                .headlineLarge
+                                ?.copyWith(
+                                  color: Colors.black87,
+                                  fontWeight: FontWeight.bold,
+                                ),
                           ),
                           const SizedBox(height: 20),
                           Text(
                             'Winner: ${players.firstWhere((p) => p['id'] == winner)['name']}',
-                            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                              color: Colors.black87,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            style: Theme.of(context)
+                                .textTheme
+                                .headlineMedium
+                                ?.copyWith(
+                                  color: Colors.black87,
+                                  fontWeight: FontWeight.bold,
+                                ),
                           ),
                         ],
                       ),
@@ -1131,12 +1519,14 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       child: ElevatedButton(
                         onPressed: () => Navigator.pushReplacement(
                           context,
-                          MaterialPageRoute(builder: (context) => const HomeScreen()),
+                          MaterialPageRoute(
+                              builder: (context) => const HomeScreen()),
                         ),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.blue,
                           foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 30, vertical: 15),
                         ),
                         child: const Text('Back to Home'),
                       ),
@@ -1156,6 +1546,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         elevation: 0,
         centerTitle: true,
+        actions: [
+          if (_gameState != null && _gameState!['game_code'] != null)
+            IconButton(
+              icon: const Icon(Icons.share),
+              onPressed: () => _showShareDialog(),
+            ),
+        ],
       ),
       body: Container(
         decoration: const BoxDecoration(
@@ -1174,7 +1571,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 child: Column(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(20),
@@ -1219,9 +1617,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               // Turn indicator
               if (gameStarted)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
                     decoration: BoxDecoration(
                       color: isMyTurn ? Colors.yellow : Colors.grey,
                       borderRadius: BorderRadius.circular(25),
@@ -1235,7 +1635,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       ],
                     ),
                     child: Text(
-                      isMyTurn ? 'YOUR TURN!' : '${currentPlayer['name']}\'s turn',
+                      isMyTurn
+                          ? 'YOUR TURN!'
+                          : '${currentPlayer['name']}\'s turn',
                       style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -1271,7 +1673,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Icon(Icons.style, color: Colors.white, size: 20),
+                            const Icon(Icons.style,
+                                color: Colors.white, size: 20),
                             Text(
                               '${_gameState!['deck']?.length ?? 0}',
                               style: const TextStyle(
@@ -1297,7 +1700,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 Container(
                   padding: const EdgeInsets.all(16),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 12),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(20),
@@ -1334,7 +1738,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 child: Column(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(20),
@@ -1359,7 +1764,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                             myPlayer['cards'].length,
                             (index) => _buildCard(
                               myPlayer['cards'][index],
-                              isPlayable: _isCardPlayable(myPlayer['cards'][index], _gameState!),
+                              isPlayable: _isCardPlayable(
+                                  myPlayer['cards'][index], _gameState!),
                               onTap: gameStarted && isMyTurn
                                   ? () => _playCard(index)
                                   : null,

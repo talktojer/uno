@@ -6,6 +6,8 @@ import random
 import asyncio
 from pydantic import BaseModel
 from enum import Enum
+import string
+import secrets
 
 app = FastAPI(title="UNO Game Backend", version="1.0.0")
 
@@ -62,6 +64,7 @@ class Player(BaseModel):
 
 class GameState(BaseModel):
     game_id: str
+    game_code: str
     players: List[Player]
     current_player_index: int
     deck: List[Card]
@@ -75,6 +78,7 @@ class GameState(BaseModel):
 class UNOGame:
     def __init__(self, game_id: str):
         self.game_id = game_id
+        self.game_code = self._generate_game_code()
         self.players: List[Player] = []
         self.deck: List[Card] = []
         self.discard_pile: List[Card] = []
@@ -84,6 +88,12 @@ class UNOGame:
         self.game_started = False
         self.winner: Optional[str] = None
         self._initialize_deck()
+    
+    def _generate_game_code(self) -> str:
+        """Generate a random 5-character game code"""
+        # Use alphanumeric characters (0-9, A-Z)
+        characters = string.ascii_uppercase + string.digits
+        return ''.join(secrets.choice(characters) for _ in range(5))
     
     def _initialize_deck(self):
         """Initialize the UNO deck with all cards"""
@@ -270,6 +280,7 @@ class UNOGame:
         """Get current game state"""
         return GameState(
             game_id=self.game_id,
+            game_code=self.game_code,
             players=self.players,
             current_player_index=self.current_player_index,
             deck=self.deck,
@@ -286,6 +297,7 @@ class UNOGame:
 
 # Game Management
 games: Dict[str, UNOGame] = {}
+games_by_code: Dict[str, str] = {}  # Maps game codes to game IDs
 active_connections: Dict[str, WebSocket] = {}
 
 @app.get("/")
@@ -300,12 +312,23 @@ async def health_check():
 async def create_game():
     """Create a new game"""
     game_id = f"game_{len(games) + 1}"
-    games[game_id] = UNOGame(game_id)
+    game = UNOGame(game_id)
+    
+    # Ensure unique game code
+    while game.game_code in games_by_code:
+        game.game_code = game._generate_game_code()
+    
+    games[game_id] = game
+    games_by_code[game.game_code] = game_id
     
     # Broadcast updated game list to all connected players
     await _broadcast_game_list_update()
     
-    return {"game_id": game_id, "message": "Game created successfully"}
+    return {
+        "game_id": game_id, 
+        "game_code": game.game_code,
+        "message": "Game created successfully"
+    }
 
 @app.get("/api/games")
 async def list_games():
@@ -314,12 +337,31 @@ async def list_games():
     for game_id, game in games.items():
         available_games.append({
             "game_id": game_id,
+            "game_code": game.game_code,
             "player_count": len(game.players),
             "max_players": 2,
             "game_started": game.game_started,
             "status": "full" if len(game.players) >= 2 else "waiting" if not game.game_started else "in_progress"
         })
     return {"games": available_games}
+
+@app.get("/api/games/code/{game_code}")
+async def get_game_by_code(game_code: str):
+    """Get game information by game code"""
+    if game_code not in games_by_code:
+        raise HTTPException(status_code=404, detail="Game code not found")
+    
+    game_id = games_by_code[game_code]
+    game = games[game_id]
+    
+    return {
+        "game_id": game_id,
+        "game_code": game_code,
+        "player_count": len(game.players),
+        "max_players": 2,
+        "game_started": game.game_started,
+        "status": "full" if len(game.players) >= 2 else "waiting" if not game.game_started else "in_progress"
+    }
 
 @app.get("/api/games/{game_id}")
 async def get_game_state(game_id: str):
@@ -332,6 +374,10 @@ async def get_game_state(game_id: str):
 class JoinGameRequest(BaseModel):
     player_name: str
 
+class JoinGameByCodeRequest(BaseModel):
+    game_code: str
+    player_name: str
+
 class PlayCardRequest(BaseModel):
     player_id: str
     card_index: int
@@ -342,7 +388,7 @@ class DrawCardRequest(BaseModel):
 
 @app.post("/api/games/{game_id}/join")
 async def join_game(game_id: str, request: JoinGameRequest):
-    """Join a game"""
+    """Join a game by game ID"""
     if game_id not in games:
         raise HTTPException(status_code=404, detail="Game not found")
     
@@ -402,6 +448,73 @@ async def join_game(game_id: str, request: JoinGameRequest):
         })
     
     return {"player_id": player_id, "message": message}
+
+@app.post("/api/games/join-by-code")
+async def join_game_by_code(request: JoinGameByCodeRequest):
+    """Join a game by 5-character game code"""
+    game_code = request.game_code
+    player_name = request.player_name
+    
+    if game_code not in games_by_code:
+        raise HTTPException(status_code=404, detail="Game code not found")
+    
+    game_id = games_by_code[game_code]
+    game = games[game_id]
+    
+    # Check if there's an available slot (either empty or disconnected player)
+    available_slots = []
+    for i, player in enumerate(game.players):
+        if player.id not in active_connections:
+            available_slots.append(i)
+    
+    if len(game.players) >= 2 and not available_slots:
+        raise HTTPException(status_code=400, detail="Game is full")
+    
+    if game.game_started and not available_slots:
+        raise HTTPException(status_code=400, detail="Game already started and full")
+    
+    # If there's an available slot, replace the disconnected player
+    if available_slots:
+        slot_index = available_slots[0]
+        old_player_id = game.players[slot_index].id
+        
+        # Create new player with the same slot
+        player_id = f"player_{slot_index + 1}"
+        player = Player(id=player_id, name=player_name, cards=[])
+        
+        # If game was started, give the new player the same cards as the old player
+        if game.game_started:
+            player.cards = game.players[slot_index].cards.copy()
+            # Reset turn if it was the disconnected player's turn
+            if slot_index == game.current_player_index:
+                player.is_current_turn = True
+        
+        game.players[slot_index] = player
+        
+        # Remove old player from active connections
+        if old_player_id in active_connections:
+            del active_connections[old_player_id]
+        
+        message = f"Replaced disconnected player. {player_name} joined the game."
+    else:
+        # Create new player in new slot
+        player_id = f"player_{len(game.players) + 1}"
+        player = Player(id=player_id, name=player_name, cards=[])
+        game.players.append(player)
+        message = f"{player_name} joined the game."
+    
+    # Broadcast updated game list to all connected players
+    await _broadcast_game_list_update()
+    
+    # If this is a replacement in a started game, broadcast the updated game state
+    if game.game_started:
+        await _broadcast_game_state(game_id, {
+            "type": "player_replaced",
+            "message": message,
+            "new_player": player.model_dump()
+        })
+    
+    return {"player_id": player_id, "game_id": game_id, "message": message}
 
 @app.post("/api/games/{game_id}/start")
 async def start_game(game_id: str):
@@ -665,6 +778,7 @@ async def _send_game_list_to_player(websocket: WebSocket):
         
         available_games.append({
             "game_id": game_id,
+            "game_code": game.game_code,
             "player_count": len(game.players),
             "active_players": active_players,
             "max_players": 2,
@@ -701,6 +815,7 @@ async def _broadcast_game_list_update():
         
         available_games.append({
             "game_id": game_id,
+            "game_code": game.game_code,
             "player_count": len(game.players),
             "active_players": active_players,
             "max_players": 2,
