@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./backend:/app
+      - /app/__pycache__
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # Flutter Frontend (optimized build)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.optimized
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/build
+      - /app/.dart_tool
+    environment:
+      - FLUTTER_ROOT=/flutter
+    networks:
+      - app-network
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  backend-data:
+  frontend-data:

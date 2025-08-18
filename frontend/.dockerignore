@@ -1,0 +1,38 @@
+# Flutter build artifacts
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# IDE files
+.vscode/
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Test files
+test/
+coverage/
+
+# Documentation
+docs/
+*.md
+
+# Docker files
+Dockerfile*
+docker-compose*
+.dockerignore
