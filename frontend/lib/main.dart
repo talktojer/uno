@@ -1831,6 +1831,57 @@ class _GameScreenState extends State<GameScreen>
 
   Widget _buildCard(Map<String, dynamic> card,
       {bool isPlayable = false, VoidCallback? onTap}) {
+    // Calculate responsive card size based on screen width and number of cards
+    final screenWidth = MediaQuery.of(context).size.width;
+    final myPlayer = _gameState?['players']?.firstWhere(
+      (p) => p['id'] == widget.playerId,
+      orElse: () => null,
+    );
+    final cardCount = myPlayer?['cards']?.length ?? 0;
+
+    // Adjust card size based on number of cards to ensure they all fit
+    double cardWidth, cardHeight, cardMargin;
+
+    if (screenWidth < 400) {
+      // Small mobile screen
+      if (cardCount <= 4) {
+        cardWidth = 65.0;
+        cardHeight = 90.0;
+        cardMargin = 3.0;
+      } else if (cardCount <= 6) {
+        cardWidth = 60.0;
+        cardHeight = 85.0;
+        cardMargin = 2.5;
+      } else if (cardCount <= 8) {
+        cardWidth = 55.0;
+        cardHeight = 80.0;
+        cardMargin = 2.0;
+      } else {
+        cardWidth = 50.0;
+        cardHeight = 75.0;
+        cardMargin = 1.5;
+      }
+    } else {
+      // Larger mobile screen
+      if (cardCount <= 4) {
+        cardWidth = 75.0;
+        cardHeight = 105.0;
+        cardMargin = 4.0;
+      } else if (cardCount <= 6) {
+        cardWidth = 70.0;
+        cardHeight = 100.0;
+        cardMargin = 3.5;
+      } else if (cardCount <= 8) {
+        cardWidth = 65.0;
+        cardHeight = 95.0;
+        cardMargin = 3.0;
+      } else {
+        cardWidth = 60.0;
+        cardHeight = 90.0;
+        cardMargin = 2.5;
+      }
+    }
+
     return GestureDetector(
       onTap: isPlayable ? onTap : null,
       child: AnimatedBuilder(
@@ -1841,9 +1892,9 @@ class _GameScreenState extends State<GameScreen>
             child: Transform.rotate(
               angle: _cardAnimation.value * 0.1,
               child: Container(
-                width: 70,
-                height: 100,
-                margin: const EdgeInsets.symmetric(horizontal: 4),
+                width: cardWidth,
+                height: cardHeight,
+                margin: EdgeInsets.symmetric(horizontal: cardMargin),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topLeft,
@@ -2414,41 +2465,91 @@ class _GameScreenState extends State<GameScreen>
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: List.generate(
                           opponent?['cards']?.length ?? 0,
-                          (index) => Container(
-                            width: 50,
-                            height: 70,
-                            margin: const EdgeInsets.symmetric(horizontal: 2),
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  Color(0xFF2D3748),
-                                  Color(0xFF4A5568),
-                                  Color(0xFF2D3748),
+                          (index) {
+                            // Adjust opponent card size based on number of cards
+                            final opponentCardCount =
+                                opponent?['cards']?.length ?? 0;
+                            double oppCardWidth, oppCardHeight, oppCardMargin;
+
+                            if (MediaQuery.of(context).size.width < 400) {
+                              // Small mobile screen
+                              if (opponentCardCount <= 4) {
+                                oppCardWidth = 45.0;
+                                oppCardHeight = 63.0;
+                                oppCardMargin = 2.0;
+                              } else if (opponentCardCount <= 6) {
+                                oppCardWidth = 40.0;
+                                oppCardHeight = 56.0;
+                                oppCardMargin = 1.5;
+                              } else if (opponentCardCount <= 8) {
+                                oppCardWidth = 35.0;
+                                oppCardHeight = 49.0;
+                                oppCardMargin = 1.0;
+                              } else {
+                                oppCardWidth = 30.0;
+                                oppCardHeight = 42.0;
+                                oppCardMargin = 0.5;
+                              }
+                            } else {
+                              // Larger mobile screen
+                              if (opponentCardCount <= 4) {
+                                oppCardWidth = 55.0;
+                                oppCardHeight = 77.0;
+                                oppCardMargin = 2.5;
+                              } else if (opponentCardCount <= 6) {
+                                oppCardWidth = 50.0;
+                                oppCardHeight = 70.0;
+                                oppCardMargin = 2.0;
+                              } else if (opponentCardCount <= 8) {
+                                oppCardWidth = 45.0;
+                                oppCardHeight = 63.0;
+                                oppCardMargin = 1.5;
+                              } else {
+                                oppCardWidth = 40.0;
+                                oppCardHeight = 56.0;
+                                oppCardMargin = 1.0;
+                              }
+                            }
+
+                            return Container(
+                              width: oppCardWidth,
+                              height: oppCardHeight,
+                              margin: EdgeInsets.symmetric(
+                                  horizontal: oppCardMargin),
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [
+                                    Color(0xFF2D3748),
+                                    Color(0xFF4A5568),
+                                    Color(0xFF2D3748),
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.6),
+                                  width: 1.5,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.3),
+                                    blurRadius: 4,
+                                    offset: const Offset(0, 2),
+                                  ),
                                 ],
                               ),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: Colors.white.withOpacity(0.6),
-                                width: 1.5,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.3),
-                                  blurRadius: 4,
-                                  offset: const Offset(0, 2),
+                              child: Center(
+                                child: Icon(
+                                  Icons.style,
+                                  color: Colors.white.withOpacity(0.8),
+                                  size: MediaQuery.of(context).size.width < 400
+                                      ? 16.0
+                                      : 20.0,
                                 ),
-                              ],
-                            ),
-                            child: Center(
-                              child: Icon(
-                                Icons.style,
-                                color: Colors.white.withOpacity(0.8),
-                                size: 20,
                               ),
-                            ),
-                          ),
+                            );
+                          },
                         ),
                       ),
                     ),
@@ -2529,84 +2630,131 @@ class _GameScreenState extends State<GameScreen>
                 ),
 
               // Game center area
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      // Draw pile
-                      Container(
-                        width: 70,
-                        height: 100,
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              Color(0xFF2D3748),
-                              Color(0xFF4A5568),
-                              Color(0xFF2D3748),
-                            ],
+              Container(
+                height: 120,
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    // Draw pile
+                    Container(
+                      width:
+                          MediaQuery.of(context).size.width < 400 ? 60.0 : 70.0,
+                      height: MediaQuery.of(context).size.width < 400
+                          ? 85.0
+                          : 100.0,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Color(0xFF2D3748),
+                            Color(0xFF4A5568),
+                            Color(0xFF2D3748),
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white, width: 2),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.4),
+                            blurRadius: 8,
+                            offset: const Offset(0, 4),
                           ),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.white, width: 2),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.4),
-                              blurRadius: 8,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(
-                                  color: Colors.white.withOpacity(0.3),
-                                  width: 2,
-                                ),
-                              ),
-                              child: const Icon(
-                                Icons.style,
-                                color: Colors.white,
-                                size: 24,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                '${_gameState!['deck']?.length ?? 0}',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+                        ],
                       ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Container(
+                            width: MediaQuery.of(context).size.width < 400
+                                ? 32.0
+                                : 40.0,
+                            height: MediaQuery.of(context).size.width < 400
+                                ? 32.0
+                                : 40.0,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(
+                                  MediaQuery.of(context).size.width < 400
+                                      ? 16.0
+                                      : 20.0),
+                              border: Border.all(
+                                color: Colors.white.withOpacity(0.3),
+                                width: 2,
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.style,
+                              color: Colors.white,
+                              size: MediaQuery.of(context).size.width < 400
+                                  ? 18.0
+                                  : 24.0,
+                            ),
+                          ),
+                          SizedBox(
+                              height: MediaQuery.of(context).size.width < 400
+                                  ? 6.0
+                                  : 8.0),
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal:
+                                  MediaQuery.of(context).size.width < 400
+                                      ? 6.0
+                                      : 8.0,
+                              vertical: MediaQuery.of(context).size.width < 400
+                                  ? 3.0
+                                  : 4.0,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              '${_gameState!['deck']?.length ?? 0}',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize:
+                                    MediaQuery.of(context).size.width < 400
+                                        ? 12.0
+                                        : 14.0,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
 
-                      // Discard pile
-                      if (discardPile.isNotEmpty)
-                        _buildCard(discardPile.last, isPlayable: false),
-                    ],
-                  ),
+                    // Discard pile - Always visible and prominent
+                    Container(
+                      width:
+                          MediaQuery.of(context).size.width < 400 ? 60.0 : 70.0,
+                      height: MediaQuery.of(context).size.width < 400
+                          ? 85.0
+                          : 100.0,
+                      child: discardPile.isNotEmpty
+                          ? _buildCard(discardPile.last, isPlayable: false)
+                          : Container(
+                              decoration: BoxDecoration(
+                                color: Colors.grey.withOpacity(0.3),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                    color: Colors.white.withOpacity(0.5),
+                                    width: 2),
+                              ),
+                              child: Center(
+                                child: Icon(
+                                  Icons.inbox,
+                                  color: Colors.white.withOpacity(0.6),
+                                  size: MediaQuery.of(context).size.width < 400
+                                      ? 24.0
+                                      : 30.0,
+                                ),
+                              ),
+                            ),
+                    ),
+                  ],
                 ),
               ),
 
@@ -2754,19 +2902,24 @@ class _GameScreenState extends State<GameScreen>
                     ),
                     const SizedBox(height: 16),
                     if (myPlayer != null) ...[
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: List.generate(
-                            myPlayer['cards'].length,
-                            (index) => _buildCard(
-                              myPlayer['cards'][index],
-                              isPlayable: _isCardPlayable(
-                                  myPlayer['cards'][index], _gameState!),
-                              onTap: gameStarted && isMyTurn
-                                  ? () => _playCard(index)
-                                  : null,
+                      Container(
+                        height: MediaQuery.of(context).size.width < 400
+                            ? 100.0
+                            : 120.0,
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: List.generate(
+                              myPlayer['cards'].length,
+                              (index) => _buildCard(
+                                myPlayer['cards'][index],
+                                isPlayable: _isCardPlayable(
+                                    myPlayer['cards'][index], _gameState!),
+                                onTap: gameStarted && isMyTurn
+                                    ? () => _playCard(index)
+                                    : null,
+                              ),
                             ),
                           ),
                         ),
