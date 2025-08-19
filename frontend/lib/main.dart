@@ -1173,12 +1173,12 @@ class _GameScreenState extends State<GameScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _cardAnimationController = AnimationController(
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 400),
       vsync: this,
     );
     _cardAnimation = CurvedAnimation(
       parent: _cardAnimationController,
-      curve: Curves.easeInOut,
+      curve: Curves.elasticOut,
     );
     _connectWebSocket();
   }
@@ -1777,23 +1777,6 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  Color _getColorFromString(String colorString) {
-    switch (colorString.toLowerCase()) {
-      case 'red':
-        return Colors.red;
-      case 'blue':
-        return Colors.blue;
-      case 'green':
-        return Colors.green;
-      case 'yellow':
-        return Colors.yellow;
-      case 'black':
-        return Colors.black;
-      default:
-        return Colors.grey;
-    }
-  }
-
   bool _isCardPlayable(
       Map<String, dynamic> card, Map<String, dynamic> gameState) {
     if (!gameState['game_started'] || gameState['winner'] != null) {
@@ -1848,99 +1831,289 @@ class _GameScreenState extends State<GameScreen>
 
   Widget _buildCard(Map<String, dynamic> card,
       {bool isPlayable = false, VoidCallback? onTap}) {
-    Color cardColor;
-    String cardText;
-    IconData? cardIcon;
-
-    switch (card['color']) {
-      case 'red':
-        cardColor = Colors.red;
-        break;
-      case 'blue':
-        cardColor = Colors.blue;
-        break;
-      case 'green':
-        cardColor = Colors.green;
-        break;
-      case 'yellow':
-        cardColor = Colors.yellow;
-        break;
-      case 'black':
-        cardColor = Colors.black;
-        break;
-      default:
-        cardColor = Colors.grey;
-    }
-
-    switch (card['type']) {
-      case 'number':
-        cardText = card['value'].toString();
-        break;
-      case 'skip':
-        cardText = '⏭';
-        cardIcon = Icons.skip_next;
-        break;
-      case 'reverse':
-        cardText = '↔';
-        cardIcon = Icons.swap_horiz;
-        break;
-      case 'draw2':
-        cardText = '+2';
-        cardIcon = Icons.add;
-        break;
-      case 'wild':
-        cardText = 'WILD';
-        break;
-      case 'wild_draw4':
-        cardText = '+4';
-        break;
-      default:
-        cardText = '?';
-    }
-
     return GestureDetector(
-      onTap: isPlayable ? onTap : null, // Only allow tap if card is playable
+      onTap: isPlayable ? onTap : null,
       child: AnimatedBuilder(
         animation: _cardAnimation,
         builder: (context, child) {
           return Transform.scale(
-            scale: 1.0 + (_cardAnimation.value * 0.1),
-            child: Container(
-              width: 60,
-              height: 90,
-              margin: const EdgeInsets.symmetric(horizontal: 2),
-              decoration: BoxDecoration(
-                color: cardColor == Colors.black ? Colors.grey[800] : cardColor,
-                borderRadius: _borderRadius,
-                border: Border.all(
-                  color: isPlayable ? Colors.white : Colors.grey,
-                  width: isPlayable ? 3 : 1,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.3),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
+            scale: 1.0 + (_cardAnimation.value * 0.15),
+            child: Transform.rotate(
+              angle: _cardAnimation.value * 0.1,
+              child: Container(
+                width: 70,
+                height: 100,
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      _getCardColor(card['color']),
+                      _getCardColor(card['color']).withOpacity(0.8),
+                      _getCardColor(card['color']).withOpacity(0.9),
+                    ],
                   ),
-                ],
-              ),
-              child: Center(
-                child: cardIcon != null
-                    ? Icon(cardIcon, color: Colors.white, size: 24)
-                    : Text(
-                        cardText,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isPlayable ? Colors.white : Colors.grey.shade400,
+                    width: isPlayable ? 3 : 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.4),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
+                    ),
+                    BoxShadow(
+                      color: Colors.white.withOpacity(0.1),
+                      blurRadius: 2,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: _buildCardContent(card),
               ),
             ),
           );
         },
       ),
     );
+  }
+
+  Widget _buildCardContent(Map<String, dynamic> card) {
+    final cardType = card['type'];
+    final cardColor = card['color'];
+
+    return Container(
+      padding: const EdgeInsets.all(8),
+      child: Column(
+        children: [
+          // Top left corner
+          Align(
+            alignment: Alignment.topLeft,
+            child: _buildCardCorner(card, isTopLeft: true),
+          ),
+
+          // Center content
+          Expanded(
+            child: Center(
+              child: _buildCardCenter(card),
+            ),
+          ),
+
+          // Bottom right corner (rotated)
+          Align(
+            alignment: Alignment.bottomRight,
+            child: Transform.rotate(
+              angle: 3.14159, // 180 degrees
+              child: _buildCardCorner(card, isTopLeft: false),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCardCorner(Map<String, dynamic> card,
+      {required bool isTopLeft}) {
+    final cardType = card['type'];
+    final cardColor = card['color'];
+
+    return Container(
+      width: 24,
+      height: 24,
+      child: cardType == 'number'
+          ? Text(
+              card['value'].toString(),
+              style: TextStyle(
+                color: _getTextColor(cardColor),
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                shadows: [
+                  Shadow(
+                    color: Colors.black.withOpacity(0.5),
+                    offset: const Offset(1, 1),
+                    blurRadius: 2,
+                  ),
+                ],
+              ),
+            )
+          : _buildActionIcon(cardType, cardColor, size: 20),
+    );
+  }
+
+  Widget _buildCardCenter(Map<String, dynamic> card) {
+    final cardType = card['type'];
+    final cardColor = card['color'];
+
+    switch (cardType) {
+      case 'number':
+        return Text(
+          card['value'].toString(),
+          style: TextStyle(
+            color: _getTextColor(cardColor),
+            fontSize: 32,
+            fontWeight: FontWeight.bold,
+            shadows: [
+              Shadow(
+                color: Colors.black.withOpacity(0.5),
+                offset: const Offset(2, 2),
+                blurRadius: 4,
+              ),
+            ],
+          ),
+        );
+      case 'skip':
+        return _buildActionIcon(Icons.skip_next, cardColor, size: 40);
+      case 'reverse':
+        return _buildActionIcon(Icons.swap_horiz, cardColor, size: 40);
+      case 'draw2':
+        return _buildActionIcon(Icons.add, cardColor, size: 40);
+      case 'wild':
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'WILD',
+              style: TextStyle(
+                color: _getTextColor(cardColor),
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                shadows: [
+                  Shadow(
+                    color: Colors.black.withOpacity(0.5),
+                    offset: const Offset(1, 1),
+                    blurRadius: 2,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildColorDot('red', size: 12),
+                const SizedBox(width: 4),
+                _buildColorDot('blue', size: 12),
+                const SizedBox(width: 4),
+                _buildColorDot('green', size: 12),
+                const SizedBox(width: 4),
+                _buildColorDot('yellow', size: 12),
+              ],
+            ),
+          ],
+        );
+      case 'wild_draw4':
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '+4',
+              style: TextStyle(
+                color: _getTextColor(cardColor),
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                shadows: [
+                  Shadow(
+                    color: Colors.black.withOpacity(0.5),
+                    offset: const Offset(1, 1),
+                    blurRadius: 2,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'WILD',
+              style: TextStyle(
+                color: _getTextColor(cardColor),
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                shadows: [
+                  Shadow(
+                    color: Colors.black.withOpacity(0.5),
+                    offset: const Offset(1, 1),
+                    blurRadius: 2,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      default:
+        return Text(
+          '?',
+          style: TextStyle(
+            color: _getTextColor(cardColor),
+            fontSize: 32,
+            fontWeight: FontWeight.bold,
+          ),
+        );
+    }
+  }
+
+  Widget _buildActionIcon(dynamic icon, String cardColor,
+      {required double size}) {
+    return Icon(
+      icon,
+      color: _getTextColor(cardColor),
+      size: size,
+      shadows: [
+        Shadow(
+          color: Colors.black.withOpacity(0.5),
+          offset: const Offset(1, 1),
+          blurRadius: 2,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildColorDot(String color, {required double size}) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: _getCardColor(color),
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.3),
+            blurRadius: 2,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _getCardColor(String colorString) {
+    switch (colorString.toLowerCase()) {
+      case 'red':
+        return const Color(0xFFE53E3E); // Vibrant red
+      case 'blue':
+        return const Color(0xFF3182CE); // Vibrant blue
+      case 'green':
+        return const Color(0xFF38A169); // Vibrant green
+      case 'yellow':
+        return const Color(0xFFD69E2E); // Vibrant yellow
+      case 'black':
+        return const Color(0xFF2D3748); // Dark gray
+      default:
+        return Colors.grey;
+    }
+  }
+
+  Color _getTextColor(String cardColor) {
+    switch (cardColor.toLowerCase()) {
+      case 'yellow':
+        return const Color(0xFF744210); // Dark brown for yellow cards
+      case 'black':
+        return Colors.white;
+      default:
+        return Colors.white;
+    }
   }
 
   @override
@@ -2184,19 +2357,54 @@ class _GameScreenState extends State<GameScreen>
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 8),
+                          horizontal: 20, vertical: 12),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.white, width: 1),
-                      ),
-                      child: Text(
-                        opponent?['name'] ?? 'Opponent',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Colors.white.withOpacity(0.3),
+                            Colors.white.withOpacity(0.1),
+                          ],
                         ),
+                        borderRadius: BorderRadius.circular(25),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.6),
+                          width: 2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.2),
+                            blurRadius: 8,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.person,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            opponent?['name'] ?? 'Opponent',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                              shadows: [
+                                Shadow(
+                                  color: Colors.black,
+                                  offset: Offset(1, 1),
+                                  blurRadius: 2,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -2207,16 +2415,38 @@ class _GameScreenState extends State<GameScreen>
                         children: List.generate(
                           opponent?['cards']?.length ?? 0,
                           (index) => Container(
-                            width: 40,
-                            height: 60,
-                            margin: const EdgeInsets.symmetric(horizontal: 1),
+                            width: 50,
+                            height: 70,
+                            margin: const EdgeInsets.symmetric(horizontal: 2),
                             decoration: BoxDecoration(
-                              color: Colors.blue[800],
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: Colors.white, width: 1),
+                              gradient: const LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  Color(0xFF2D3748),
+                                  Color(0xFF4A5568),
+                                  Color(0xFF2D3748),
+                                ],
+                              ),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: Colors.white.withOpacity(0.6),
+                                width: 1.5,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.3),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
                             ),
-                            child: const Center(
-                              child: Icon(Icons.style, color: Colors.white),
+                            child: Center(
+                              child: Icon(
+                                Icons.style,
+                                color: Colors.white.withOpacity(0.8),
+                                size: 20,
+                              ),
                             ),
                           ),
                         ),
@@ -2233,28 +2463,67 @@ class _GameScreenState extends State<GameScreen>
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 12),
+                        horizontal: 24, vertical: 16),
                     decoration: BoxDecoration(
-                      color: isMyTurn ? Colors.yellow : Colors.grey,
-                      borderRadius: BorderRadius.circular(25),
-                      border: Border.all(color: Colors.white, width: 2),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: isMyTurn
+                            ? [
+                                const Color(0xFFF6E05E), // Bright yellow
+                                const Color(0xFFECC94B), // Medium yellow
+                                const Color(0xFFD69E2E), // Dark yellow
+                              ]
+                            : [
+                                const Color(0xFFA0AEC0), // Light gray
+                                const Color(0xFF718096), // Medium gray
+                                const Color(0xFF4A5568), // Dark gray
+                              ],
+                      ),
+                      borderRadius: BorderRadius.circular(30),
+                      border: Border.all(
+                        color: isMyTurn
+                            ? Colors.white
+                            : Colors.white.withOpacity(0.6),
+                        width: 3,
+                      ),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 8,
-                          offset: const Offset(0, 4),
+                          color: Colors.black.withOpacity(0.3),
+                          blurRadius: 12,
+                          offset: const Offset(0, 6),
                         ),
                       ],
                     ),
-                    child: Text(
-                      isMyTurn
-                          ? 'YOUR TURN!'
-                          : '${currentPlayer['name']}\'s turn',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isMyTurn) ...[
+                          const Icon(
+                            Icons.play_arrow,
+                            color: Colors.white,
+                            size: 24,
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                        Text(
+                          isMyTurn
+                              ? 'YOUR TURN!'
+                              : '${currentPlayer['name']}\'s turn',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: isMyTurn ? Colors.white : Colors.white,
+                            shadows: [
+                              Shadow(
+                                color: Colors.black.withOpacity(0.5),
+                                offset: const Offset(1, 1),
+                                blurRadius: 2,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -2268,15 +2537,23 @@ class _GameScreenState extends State<GameScreen>
                     children: [
                       // Draw pile
                       Container(
-                        width: 60,
-                        height: 90,
+                        width: 70,
+                        height: 100,
                         decoration: BoxDecoration(
-                          color: Colors.blue[800],
-                          borderRadius: _borderRadius,
+                          gradient: const LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Color(0xFF2D3748),
+                              Color(0xFF4A5568),
+                              Color(0xFF2D3748),
+                            ],
+                          ),
+                          borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: Colors.white, width: 2),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.3),
+                              color: Colors.black.withOpacity(0.4),
                               blurRadius: 8,
                               offset: const Offset(0, 4),
                             ),
@@ -2285,14 +2562,40 @@ class _GameScreenState extends State<GameScreen>
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Icon(Icons.style,
-                                color: Colors.white, size: 20),
-                            Text(
-                              '${_gameState!['deck']?.length ?? 0}',
-                              style: const TextStyle(
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.3),
+                                  width: 2,
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.style,
                                 color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
+                                size: 24,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                '${_gameState!['deck']?.length ?? 0}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
                           ],
@@ -2313,11 +2616,28 @@ class _GameScreenState extends State<GameScreen>
                   padding: const EdgeInsets.all(16),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 12),
+                        horizontal: 24, vertical: 16),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.white, width: 2),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Colors.white.withOpacity(0.3),
+                          Colors.white.withOpacity(0.1),
+                        ],
+                      ),
+                      borderRadius: BorderRadius.circular(25),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.6),
+                        width: 2,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.2),
+                          blurRadius: 8,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -2328,15 +2648,39 @@ class _GameScreenState extends State<GameScreen>
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
+                            shadows: [
+                              Shadow(
+                                color: Colors.black,
+                                offset: Offset(1, 1),
+                                blurRadius: 2,
+                              ),
+                            ],
                           ),
                         ),
                         Container(
-                          width: 30,
-                          height: 30,
+                          width: 40,
+                          height: 40,
                           decoration: BoxDecoration(
-                            color: _getColorFromString(currentColor),
-                            borderRadius: BorderRadius.circular(15),
-                            border: Border.all(color: Colors.white, width: 2),
+                            gradient: LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                _getCardColor(currentColor),
+                                _getCardColor(currentColor).withOpacity(0.8),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: Colors.white,
+                              width: 3,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.3),
+                                blurRadius: 6,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -2351,19 +2695,61 @@ class _GameScreenState extends State<GameScreen>
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 8),
+                          horizontal: 20, vertical: 12),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.white, width: 1),
-                      ),
-                      child: Text(
-                        '${widget.playerName} (You)',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Colors.white.withOpacity(0.4),
+                            Colors.white.withOpacity(0.2),
+                          ],
                         ),
+                        borderRadius: BorderRadius.circular(25),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.8),
+                          width: 2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.3),
+                            blurRadius: 10,
+                            offset: const Offset(0, 5),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withOpacity(0.8),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: const Icon(
+                              Icons.person,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${widget.playerName} (You)',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                              shadows: [
+                                Shadow(
+                                  color: Colors.black,
+                                  offset: Offset(1, 1),
+                                  blurRadius: 2,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -2389,13 +2775,52 @@ class _GameScreenState extends State<GameScreen>
                       if (gameStarted && isMyTurn)
                         SizedBox(
                           width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: _drawCard,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.orange,
-                              foregroundColor: Colors.white,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  Color(0xFFED8936), // Orange
+                                  Color(0xFFDD6B20), // Dark orange
+                                ],
+                              ),
+                              borderRadius: BorderRadius.circular(15),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.3),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
                             ),
-                            child: const Text('Draw Card'),
+                            child: ElevatedButton(
+                              onPressed: _drawCard,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.transparent,
+                                foregroundColor: Colors.white,
+                                shadowColor: Colors.transparent,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(15),
+                                ),
+                              ),
+                              child: const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.add_circle_outline, size: 24),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Draw Card',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                         ),
                     ],
@@ -2409,13 +2834,51 @@ class _GameScreenState extends State<GameScreen>
                   padding: const EdgeInsets.all(16),
                   child: SizedBox(
                     width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _startGame,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Color(0xFF48BB78), // Green
+                            Color(0xFF38A169), // Dark green
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.3),
+                            blurRadius: 12,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
                       ),
-                      child: const Text('Start Game'),
+                      child: ElevatedButton(
+                        onPressed: _startGame,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          foregroundColor: Colors.white,
+                          shadowColor: Colors.transparent,
+                          padding: const EdgeInsets.symmetric(vertical: 20),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.play_circle_filled, size: 28),
+                            SizedBox(width: 12),
+                            Text(
+                              'Start Game',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
