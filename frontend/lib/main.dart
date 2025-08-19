@@ -7,6 +7,7 @@ import 'dart:html' as html;
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'config/mobile_theme.dart';
+import 'config/mobile_config.dart';
 
 // WebSocket Connection Manager for handling reconnections
 class WebSocketManager {
@@ -1339,6 +1340,9 @@ class _GameScreenState extends State<GameScreen>
   bool _isReconnecting = false;
   bool _canReclaimSlot = false;
 
+  // Add window resize listener for responsive updates
+  StreamSubscription<html.Event>? _resizeSubscription;
+
   // Helper method for consistent border radius
   static BorderRadius get _borderRadius => BorderRadius.circular(8);
 
@@ -1355,6 +1359,9 @@ class _GameScreenState extends State<GameScreen>
       curve: Curves.elasticOut,
     );
     _connectWebSocket();
+
+    // Add window resize listener for responsive updates
+    _setupResizeListener();
   }
 
   @override
@@ -1362,6 +1369,7 @@ class _GameScreenState extends State<GameScreen>
     WidgetsBinding.instance.removeObserver(this);
     _gameWebSocket?.disconnect();
     _cardAnimationController.dispose();
+    _resizeSubscription?.cancel();
     super.dispose();
   }
 
@@ -1399,6 +1407,20 @@ class _GameScreenState extends State<GameScreen>
         !_isReconnecting) {
       print('WebSocket not connected, attempting to reconnect...');
       _checkSlotReclamation();
+    }
+  }
+
+  // Setup window resize listener for responsive updates
+  void _setupResizeListener() {
+    try {
+      _resizeSubscription = html.window.onResize.listen((event) {
+        // Force rebuild when window is resized to update responsive layout
+        if (mounted) {
+          setState(() {});
+        }
+      });
+    } catch (e) {
+      print('Could not setup resize listener: $e');
     }
   }
 
@@ -2005,56 +2027,23 @@ class _GameScreenState extends State<GameScreen>
 
   Widget _buildCard(Map<String, dynamic> card,
       {bool isPlayable = false, VoidCallback? onTap}) {
-    // Calculate responsive card size based on screen width and number of cards
-    final screenWidth = MediaQuery.of(context).size.width;
+    // Get responsive dimensions
+    final isMobile = MobileConfig.isMobile(context);
+    final isTablet = MobileConfig.isTablet(context);
+    final isDesktop = MobileConfig.isDesktop(context);
+    final cardDimensions = MobileConfig.getCardDimensions(context);
+
     final myPlayer = _gameState?['players']?.firstWhere(
       (p) => p['id'] == widget.playerId,
       orElse: () => null,
     );
     final cardCount = myPlayer?['cards']?.length ?? 0;
 
-    // Adjust card size based on number of cards to ensure they all fit
-    double cardWidth, cardHeight, cardMargin;
-
-    if (screenWidth < 400) {
-      // Small mobile screen
-      if (cardCount <= 4) {
-        cardWidth = 65.0;
-        cardHeight = 90.0;
-        cardMargin = 3.0;
-      } else if (cardCount <= 6) {
-        cardWidth = 60.0;
-        cardHeight = 85.0;
-        cardMargin = 2.5;
-      } else if (cardCount <= 8) {
-        cardWidth = 55.0;
-        cardHeight = 80.0;
-        cardMargin = 2.0;
-      } else {
-        cardWidth = 50.0;
-        cardHeight = 75.0;
-        cardMargin = 1.5;
-      }
-    } else {
-      // Larger mobile screen
-      if (cardCount <= 4) {
-        cardWidth = 75.0;
-        cardHeight = 105.0;
-        cardMargin = 4.0;
-      } else if (cardCount <= 6) {
-        cardWidth = 70.0;
-        cardHeight = 100.0;
-        cardMargin = 3.5;
-      } else if (cardCount <= 8) {
-        cardWidth = 65.0;
-        cardHeight = 95.0;
-        cardMargin = 3.0;
-      } else {
-        cardWidth = 60.0;
-        cardHeight = 90.0;
-        cardMargin = 2.5;
-      }
-    }
+    // Responsive card sizing based on device type and card count
+    final scaling = MobileConfig.getPlayerCardScaling(context, cardCount);
+    final cardWidth = cardDimensions.width * scaling['width']!;
+    final cardHeight = cardDimensions.height * scaling['height']!;
+    final cardMargin = scaling['margin']!;
 
     return GestureDetector(
       onTap: isPlayable ? onTap : null,
@@ -2110,8 +2099,13 @@ class _GameScreenState extends State<GameScreen>
     final cardType = card['type'];
     final cardColor = card['color'];
 
+    // Get responsive dimensions
+    final isMobile = MobileConfig.isMobile(context);
+    final isTablet = MobileConfig.isTablet(context);
+    final isDesktop = MobileConfig.isDesktop(context);
+
     return Container(
-      padding: const EdgeInsets.all(8),
+      padding: EdgeInsets.all(isMobile ? 6 : (isTablet ? 7 : 8)),
       child: Column(
         children: [
           // Top left corner
@@ -2145,15 +2139,24 @@ class _GameScreenState extends State<GameScreen>
     final cardType = card['type'];
     final cardColor = card['color'];
 
+    // Get responsive dimensions
+    final isMobile = MobileConfig.isMobile(context);
+    final isTablet = MobileConfig.isTablet(context);
+    final isDesktop = MobileConfig.isDesktop(context);
+
+    final cornerSize = isMobile ? 20.0 : (isTablet ? 22.0 : 24.0);
+    final fontSize = isMobile ? 14.0 : (isTablet ? 15.0 : 16.0);
+    final iconSize = isMobile ? 16.0 : (isTablet ? 18.0 : 20.0);
+
     return Container(
-      width: 24,
-      height: 24,
+      width: cornerSize,
+      height: cornerSize,
       child: cardType == 'number'
           ? Text(
               card['value'].toString(),
               style: TextStyle(
                 color: _getTextColor(cardColor),
-                fontSize: 16,
+                fontSize: fontSize,
                 fontWeight: FontWeight.bold,
                 shadows: [
                   Shadow(
@@ -2164,7 +2167,7 @@ class _GameScreenState extends State<GameScreen>
                 ],
               ),
             )
-          : _buildActionIcon(cardType, cardColor, size: 20),
+          : _buildActionIcon(cardType, cardColor, size: iconSize),
     );
   }
 
@@ -2172,13 +2175,26 @@ class _GameScreenState extends State<GameScreen>
     final cardType = card['type'];
     final cardColor = card['color'];
 
+    // Get responsive dimensions
+    final isMobile = MobileConfig.isMobile(context);
+    final isTablet = MobileConfig.isTablet(context);
+    final isDesktop = MobileConfig.isDesktop(context);
+
+    final centerIconSize = isMobile ? 32.0 : (isTablet ? 36.0 : 40.0);
+    final numberFontSize = isMobile ? 28.0 : (isTablet ? 30.0 : 32.0);
+    final wildFontSize = isMobile ? 16.0 : (isTablet ? 17.0 : 18.0);
+    final wildDraw4FontSize = isMobile ? 24.0 : (isTablet ? 26.0 : 28.0);
+    final wildDraw4SubFontSize = isMobile ? 12.0 : (isTablet ? 13.0 : 14.0);
+    final colorDotSize = isMobile ? 10.0 : (isTablet ? 11.0 : 12.0);
+    final spacing = isMobile ? 3.0 : (isTablet ? 3.5 : 4.0);
+
     switch (cardType) {
       case 'number':
         return Text(
           card['value'].toString(),
           style: TextStyle(
             color: _getTextColor(cardColor),
-            fontSize: 32,
+            fontSize: numberFontSize,
             fontWeight: FontWeight.bold,
             shadows: [
               Shadow(
@@ -2190,11 +2206,13 @@ class _GameScreenState extends State<GameScreen>
           ),
         );
       case 'skip':
-        return _buildActionIcon(Icons.skip_next, cardColor, size: 40);
+        return _buildActionIcon(Icons.skip_next, cardColor,
+            size: centerIconSize);
       case 'reverse':
-        return _buildActionIcon(Icons.swap_horiz, cardColor, size: 40);
+        return _buildActionIcon(Icons.swap_horiz, cardColor,
+            size: centerIconSize);
       case 'draw2':
-        return _buildActionIcon(Icons.add, cardColor, size: 40);
+        return _buildActionIcon(Icons.add, cardColor, size: centerIconSize);
       case 'wild':
         return Column(
           mainAxisSize: MainAxisSize.min,
@@ -2203,7 +2221,7 @@ class _GameScreenState extends State<GameScreen>
               'WILD',
               style: TextStyle(
                 color: _getTextColor(cardColor),
-                fontSize: 18,
+                fontSize: wildFontSize,
                 fontWeight: FontWeight.bold,
                 shadows: [
                   Shadow(
@@ -2214,17 +2232,17 @@ class _GameScreenState extends State<GameScreen>
                 ],
               ),
             ),
-            const SizedBox(height: 4),
+            SizedBox(height: spacing),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _buildColorDot('red', size: 12),
-                const SizedBox(width: 4),
-                _buildColorDot('blue', size: 12),
-                const SizedBox(width: 4),
-                _buildColorDot('green', size: 12),
-                const SizedBox(width: 4),
-                _buildColorDot('yellow', size: 12),
+                _buildColorDot('red', size: colorDotSize),
+                SizedBox(width: spacing),
+                _buildColorDot('blue', size: colorDotSize),
+                SizedBox(width: spacing),
+                _buildColorDot('green', size: colorDotSize),
+                SizedBox(width: spacing),
+                _buildColorDot('yellow', size: colorDotSize),
               ],
             ),
           ],
@@ -2237,7 +2255,7 @@ class _GameScreenState extends State<GameScreen>
               '+4',
               style: TextStyle(
                 color: _getTextColor(cardColor),
-                fontSize: 28,
+                fontSize: wildDraw4FontSize,
                 fontWeight: FontWeight.bold,
                 shadows: [
                   Shadow(
@@ -2248,12 +2266,12 @@ class _GameScreenState extends State<GameScreen>
                 ],
               ),
             ),
-            const SizedBox(height: 4),
+            SizedBox(height: spacing),
             Text(
               'WILD',
               style: TextStyle(
                 color: _getTextColor(cardColor),
-                fontSize: 14,
+                fontSize: wildDraw4SubFontSize,
                 fontWeight: FontWeight.bold,
                 shadows: [
                   Shadow(
@@ -2380,6 +2398,18 @@ class _GameScreenState extends State<GameScreen>
     // Check if it's my turn
     final isMyTurn = currentPlayer['id'] == widget.playerId;
 
+    // Get responsive dimensions
+    final screenSize = MediaQuery.of(context).size;
+    final isMobile = MobileConfig.isMobile(context);
+    final isTablet = MobileConfig.isTablet(context);
+    final isDesktop = MobileConfig.isDesktop(context);
+
+    // Responsive card dimensions
+    final cardDimensions = MobileConfig.getCardDimensions(context);
+    final spacing = MobileConfig.getSpacing(context);
+    final buttonHeight = MobileConfig.getButtonHeight(context);
+    final bottomPadding = MobileConfig.getBottomPadding(context);
+
     if (winner != null) {
       return Scaffold(
         body: Container(
@@ -2391,20 +2421,15 @@ class _GameScreenState extends State<GameScreen>
             ),
           ),
           child: SafeArea(
-            bottom: false, // Don't add bottom safe area padding
+            bottom: false,
             child: Center(
               child: Padding(
-                padding: const EdgeInsets.only(
-                  left: 24.0,
-                  right: 24.0,
-                  top: 24.0,
-                  bottom: 48.0, // Extra bottom padding for mobile
-                ),
+                padding: EdgeInsets.all(spacing),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(32),
+                      padding: EdgeInsets.all(spacing * 2),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(24),
@@ -2418,12 +2443,12 @@ class _GameScreenState extends State<GameScreen>
                       ),
                       child: Column(
                         children: [
-                          const Icon(
+                          Icon(
                             Icons.emoji_events,
-                            size: 100,
+                            size: isMobile ? 80 : 100,
                             color: Colors.yellow,
                           ),
-                          const SizedBox(height: 20),
+                          SizedBox(height: spacing),
                           Text(
                             'Game Over!',
                             style: Theme.of(context)
@@ -2434,7 +2459,7 @@ class _GameScreenState extends State<GameScreen>
                                   fontWeight: FontWeight.bold,
                                 ),
                           ),
-                          const SizedBox(height: 20),
+                          SizedBox(height: spacing),
                           Text(
                             'Winner: ${players.firstWhere((p) => p['id'] == winner)['name']}',
                             style: Theme.of(context)
@@ -2448,7 +2473,7 @@ class _GameScreenState extends State<GameScreen>
                         ],
                       ),
                     ),
-                    const SizedBox(height: 40),
+                    SizedBox(height: spacing * 2),
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
@@ -2460,8 +2485,9 @@ class _GameScreenState extends State<GameScreen>
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.blue,
                           foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 30, vertical: 15),
+                          padding: EdgeInsets.symmetric(
+                              horizontal: spacing * 2, vertical: spacing),
+                          minimumSize: Size(0, buttonHeight),
                         ),
                         child: const Text('Back to Home'),
                       ),
@@ -2486,8 +2512,8 @@ class _GameScreenState extends State<GameScreen>
           GestureDetector(
             onTap: _showConnectionDialog,
             child: Container(
-              margin: const EdgeInsets.only(right: 8),
-              padding: const EdgeInsets.all(4),
+              margin: EdgeInsets.only(right: spacing / 2),
+              padding: EdgeInsets.all(4),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -2500,8 +2526,8 @@ class _GameScreenState extends State<GameScreen>
                     ),
                   ),
                   if (_isReconnecting) ...[
-                    const SizedBox(width: 4),
-                    const SizedBox(
+                    SizedBox(width: 4),
+                    SizedBox(
                       width: 12,
                       height: 12,
                       child: CircularProgressIndicator(strokeWidth: 2),
@@ -2527,699 +2553,774 @@ class _GameScreenState extends State<GameScreen>
           ),
         ),
         child: SafeArea(
-          bottom: false, // Don't add bottom safe area padding
-          child: Column(
-            children: [
-              // Connection status banner
-              if (!_isConnected)
-                Container(
-                  width: double.infinity,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  color: _isReconnecting ? Colors.orange : Colors.red,
-                  child: Row(
-                    children: [
-                      Icon(
-                        _isReconnecting ? Icons.wifi_find : Icons.wifi_off,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _isReconnecting
-                              ? 'Reconnecting to game server...'
-                              : _canReclaimSlot
-                                  ? 'Your slot is available to reclaim!'
-                                  : 'Disconnected from game server',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                      if (!_isReconnecting) ...[
-                        if (_canReclaimSlot)
-                          TextButton(
-                            onPressed: _manualSlotReclamation,
-                            style: TextButton.styleFrom(
-                              foregroundColor: Colors.white,
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 8),
-                            ),
-                            child: const Text('RECLAIM SLOT'),
-                          ),
-                        if (_canReclaimSlot) const SizedBox(width: 8),
-                        TextButton(
-                          onPressed: _manualReconnect,
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                          ),
-                          child: const Text('RECONNECT'),
-                        ),
-                      ],
-                    ],
+          bottom: false,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: constraints.maxHeight,
                   ),
-                ),
-              // Opponent's cards
-              Container(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 12),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            Colors.white.withOpacity(0.3),
-                            Colors.white.withOpacity(0.1),
-                          ],
-                        ),
-                        borderRadius: BorderRadius.circular(25),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.6),
-                          width: 2,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.2),
-                            blurRadius: 8,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.person,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            opponent?['name'] ?? 'Opponent',
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                              shadows: [
-                                Shadow(
-                                  color: Colors.black,
-                                  offset: Offset(1, 1),
-                                  blurRadius: 2,
+                  child: IntrinsicHeight(
+                    child: Column(
+                      children: [
+                        // Connection status banner
+                        if (!_isConnected)
+                          Container(
+                            width: double.infinity,
+                            padding: EdgeInsets.symmetric(
+                                horizontal: spacing, vertical: spacing / 2),
+                            color: _isReconnecting ? Colors.orange : Colors.red,
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _isReconnecting
+                                      ? Icons.wifi_find
+                                      : Icons.wifi_off,
+                                  color: Colors.white,
+                                  size: 20,
                                 ),
+                                SizedBox(width: spacing / 2),
+                                Expanded(
+                                  child: Text(
+                                    _isReconnecting
+                                        ? 'Reconnecting to game server...'
+                                        : _canReclaimSlot
+                                            ? 'Your slot is available to reclaim!'
+                                            : 'Disconnected from game server',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ),
+                                if (!_isReconnecting) ...[
+                                  if (_canReclaimSlot)
+                                    TextButton(
+                                      onPressed: _manualSlotReclamation,
+                                      style: TextButton.styleFrom(
+                                        foregroundColor: Colors.white,
+                                        padding: EdgeInsets.symmetric(
+                                            horizontal: spacing / 2),
+                                      ),
+                                      child: const Text('RECLAIM SLOT'),
+                                    ),
+                                  if (_canReclaimSlot)
+                                    SizedBox(width: spacing / 2),
+                                  TextButton(
+                                    onPressed: _manualReconnect,
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: Colors.white,
+                                      padding: EdgeInsets.symmetric(
+                                          horizontal: spacing / 2),
+                                    ),
+                                    child: const Text('RECONNECT'),
+                                  ),
+                                ],
                               ],
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: List.generate(
-                          opponent?['cards']?.length ?? 0,
-                          (index) {
-                            // Adjust opponent card size based on number of cards
-                            final opponentCardCount =
-                                opponent?['cards']?.length ?? 0;
-                            double oppCardWidth, oppCardHeight, oppCardMargin;
 
-                            if (MediaQuery.of(context).size.width < 400) {
-                              // Small mobile screen
-                              if (opponentCardCount <= 4) {
-                                oppCardWidth = 45.0;
-                                oppCardHeight = 63.0;
-                                oppCardMargin = 2.0;
-                              } else if (opponentCardCount <= 6) {
-                                oppCardWidth = 40.0;
-                                oppCardHeight = 56.0;
-                                oppCardMargin = 1.5;
-                              } else if (opponentCardCount <= 8) {
-                                oppCardWidth = 35.0;
-                                oppCardHeight = 49.0;
-                                oppCardMargin = 1.0;
-                              } else {
-                                oppCardWidth = 30.0;
-                                oppCardHeight = 42.0;
-                                oppCardMargin = 0.5;
-                              }
-                            } else {
-                              // Larger mobile screen
-                              if (opponentCardCount <= 4) {
-                                oppCardWidth = 55.0;
-                                oppCardHeight = 77.0;
-                                oppCardMargin = 2.5;
-                              } else if (opponentCardCount <= 6) {
-                                oppCardWidth = 50.0;
-                                oppCardHeight = 70.0;
-                                oppCardMargin = 2.0;
-                              } else if (opponentCardCount <= 8) {
-                                oppCardWidth = 45.0;
-                                oppCardHeight = 63.0;
-                                oppCardMargin = 1.5;
-                              } else {
-                                oppCardWidth = 40.0;
-                                oppCardHeight = 56.0;
-                                oppCardMargin = 1.0;
-                              }
-                            }
-
-                            return Container(
-                              width: oppCardWidth,
-                              height: oppCardHeight,
-                              margin: EdgeInsets.symmetric(
-                                  horizontal: oppCardMargin),
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: [
-                                    Color(0xFF2D3748),
-                                    Color(0xFF4A5568),
-                                    Color(0xFF2D3748),
+                        // Opponent's cards
+                        Container(
+                          padding: EdgeInsets.all(spacing),
+                          child: Column(
+                            children: [
+                              Container(
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: spacing * 1.25,
+                                    vertical: spacing * 0.75),
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [
+                                      Colors.white.withOpacity(0.3),
+                                      Colors.white.withOpacity(0.1),
+                                    ],
+                                  ),
+                                  borderRadius: BorderRadius.circular(25),
+                                  border: Border.all(
+                                    color: Colors.white.withOpacity(0.6),
+                                    width: 2,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.2),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 4),
+                                    ),
                                   ],
                                 ),
-                                borderRadius: BorderRadius.circular(8),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.person,
+                                      color: Colors.white,
+                                      size: isMobile ? 18 : 20,
+                                    ),
+                                    SizedBox(width: spacing / 2),
+                                    Text(
+                                      opponent?['name'] ?? 'Opponent',
+                                      style: TextStyle(
+                                        fontSize: isMobile ? 16 : 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                        shadows: [
+                                          Shadow(
+                                            color: Colors.black,
+                                            offset: Offset(1, 1),
+                                            blurRadius: 2,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              SizedBox(height: spacing * 0.625),
+                              SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: List.generate(
+                                    opponent?['cards']?.length ?? 0,
+                                    (index) {
+                                      // Responsive opponent card sizing
+                                      final opponentCardCount =
+                                          opponent?['cards']?.length ?? 0;
+                                      double oppCardWidth,
+                                          oppCardHeight,
+                                          oppCardMargin;
+
+                                      if (isMobile) {
+                                        if (opponentCardCount <= 4) {
+                                          oppCardWidth =
+                                              cardDimensions.width * 0.75;
+                                          oppCardHeight =
+                                              cardDimensions.height * 0.7;
+                                          oppCardMargin = 1.0;
+                                        } else if (opponentCardCount <= 6) {
+                                          oppCardWidth =
+                                              cardDimensions.width * 0.67;
+                                          oppCardHeight =
+                                              cardDimensions.height * 0.62;
+                                          oppCardMargin = 0.75;
+                                        } else if (opponentCardCount <= 8) {
+                                          oppCardWidth =
+                                              cardDimensions.width * 0.58;
+                                          oppCardHeight =
+                                              cardDimensions.height * 0.54;
+                                          oppCardMargin = 0.5;
+                                        } else {
+                                          oppCardWidth =
+                                              cardDimensions.width * 0.5;
+                                          oppCardHeight =
+                                              cardDimensions.height * 0.47;
+                                          oppCardMargin = 0.25;
+                                        }
+                                      } else if (isTablet) {
+                                        if (opponentCardCount <= 4) {
+                                          oppCardWidth =
+                                              cardDimensions.width * 0.85;
+                                          oppCardHeight =
+                                              cardDimensions.height * 0.8;
+                                          oppCardMargin = 1.5;
+                                        } else if (opponentCardCount <= 6) {
+                                          oppCardWidth =
+                                              cardDimensions.width * 0.75;
+                                          oppCardHeight =
+                                              cardDimensions.height * 0.7;
+                                          oppCardMargin = 1.25;
+                                        } else if (opponentCardCount <= 8) {
+                                          oppCardWidth =
+                                              cardDimensions.width * 0.67;
+                                          oppCardHeight =
+                                              cardDimensions.height * 0.62;
+                                          oppCardMargin = 1.0;
+                                        } else {
+                                          oppCardWidth =
+                                              cardDimensions.width * 0.58;
+                                          oppCardHeight =
+                                              cardDimensions.height * 0.54;
+                                          oppCardMargin = 0.75;
+                                        }
+                                      } else {
+                                        if (opponentCardCount <= 4) {
+                                          oppCardWidth =
+                                              cardDimensions.width * 0.9;
+                                          oppCardHeight =
+                                              cardDimensions.height * 0.85;
+                                          oppCardMargin = 2.0;
+                                        } else if (opponentCardCount <= 6) {
+                                          oppCardWidth =
+                                              cardDimensions.width * 0.8;
+                                          oppCardHeight =
+                                              cardDimensions.height * 0.75;
+                                          oppCardMargin = 1.75;
+                                        } else if (opponentCardCount <= 8) {
+                                          oppCardWidth =
+                                              cardDimensions.width * 0.7;
+                                          oppCardHeight =
+                                              cardDimensions.height * 0.65;
+                                          oppCardMargin = 1.5;
+                                        } else {
+                                          oppCardWidth =
+                                              cardDimensions.width * 0.6;
+                                          oppCardHeight =
+                                              cardDimensions.height * 0.55;
+                                          oppCardMargin = 1.25;
+                                        }
+                                      }
+
+                                      return Container(
+                                        width: oppCardWidth,
+                                        height: oppCardHeight,
+                                        margin: EdgeInsets.symmetric(
+                                            horizontal: oppCardMargin),
+                                        decoration: BoxDecoration(
+                                          gradient: const LinearGradient(
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                            colors: [
+                                              Color(0xFF2D3748),
+                                              Color(0xFF4A5568),
+                                              Color(0xFF2D3748),
+                                            ],
+                                          ),
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          border: Border.all(
+                                            color:
+                                                Colors.white.withOpacity(0.6),
+                                            width: 1.5,
+                                          ),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color:
+                                                  Colors.black.withOpacity(0.3),
+                                              blurRadius: 4,
+                                              offset: const Offset(0, 2),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Center(
+                                          child: Icon(
+                                            Icons.style,
+                                            color:
+                                                Colors.white.withOpacity(0.8),
+                                            size: isMobile
+                                                ? 14
+                                                : (isTablet ? 18 : 20),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // Turn indicator
+                        if (gameStarted)
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                                horizontal: spacing, vertical: spacing / 2),
+                            child: Container(
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: spacing * 1.5, vertical: spacing),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: isMyTurn
+                                      ? [
+                                          const Color(
+                                              0xFFF6E05E), // Bright yellow
+                                          const Color(
+                                              0xFFECC94B), // Medium yellow
+                                          const Color(
+                                              0xFFD69E2E), // Dark yellow
+                                        ]
+                                      : [
+                                          const Color(0xFFA0AEC0), // Light gray
+                                          const Color(
+                                              0xFF718096), // Medium gray
+                                          const Color(0xFF4A5568), // Dark gray
+                                        ],
+                                ),
+                                borderRadius: BorderRadius.circular(30),
                                 border: Border.all(
-                                  color: Colors.white.withOpacity(0.6),
-                                  width: 1.5,
+                                  color: isMyTurn
+                                      ? Colors.white
+                                      : Colors.white.withOpacity(0.6),
+                                  width: 3,
                                 ),
                                 boxShadow: [
                                   BoxShadow(
                                     color: Colors.black.withOpacity(0.3),
-                                    blurRadius: 4,
-                                    offset: const Offset(0, 2),
+                                    blurRadius: 12,
+                                    offset: const Offset(0, 6),
                                   ),
                                 ],
                               ),
-                              child: Center(
-                                child: Icon(
-                                  Icons.style,
-                                  color: Colors.white.withOpacity(0.8),
-                                  size: MediaQuery.of(context).size.width < 400
-                                      ? 16.0
-                                      : 20.0,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Turn indicator
-              if (gameStarted)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 16),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: isMyTurn
-                            ? [
-                                const Color(0xFFF6E05E), // Bright yellow
-                                const Color(0xFFECC94B), // Medium yellow
-                                const Color(0xFFD69E2E), // Dark yellow
-                              ]
-                            : [
-                                const Color(0xFFA0AEC0), // Light gray
-                                const Color(0xFF718096), // Medium gray
-                                const Color(0xFF4A5568), // Dark gray
-                              ],
-                      ),
-                      borderRadius: BorderRadius.circular(30),
-                      border: Border.all(
-                        color: isMyTurn
-                            ? Colors.white
-                            : Colors.white.withOpacity(0.6),
-                        width: 3,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.3),
-                          blurRadius: 12,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (isMyTurn) ...[
-                          const Icon(
-                            Icons.play_arrow,
-                            color: Colors.white,
-                            size: 24,
-                          ),
-                          const SizedBox(width: 8),
-                        ],
-                        Text(
-                          isMyTurn
-                              ? 'YOUR TURN!'
-                              : '${currentPlayer['name']}\'s turn',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: isMyTurn ? Colors.white : Colors.white,
-                            shadows: [
-                              Shadow(
-                                color: Colors.black.withOpacity(0.5),
-                                offset: const Offset(1, 1),
-                                blurRadius: 2,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-              // Game center area
-              Container(
-                height: 120,
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    // Draw pile
-                    Container(
-                      width:
-                          MediaQuery.of(context).size.width < 400 ? 60.0 : 70.0,
-                      height: MediaQuery.of(context).size.width < 400
-                          ? 85.0
-                          : 100.0,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            Color(0xFF2D3748),
-                            Color(0xFF4A5568),
-                            Color(0xFF2D3748),
-                          ],
-                        ),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.white, width: 2),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.4),
-                            blurRadius: 8,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            width: MediaQuery.of(context).size.width < 400
-                                ? 32.0
-                                : 40.0,
-                            height: MediaQuery.of(context).size.width < 400
-                                ? 32.0
-                                : 40.0,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(
-                                  MediaQuery.of(context).size.width < 400
-                                      ? 16.0
-                                      : 20.0),
-                              border: Border.all(
-                                color: Colors.white.withOpacity(0.3),
-                                width: 2,
-                              ),
-                            ),
-                            child: Icon(
-                              Icons.style,
-                              color: Colors.white,
-                              size: MediaQuery.of(context).size.width < 400
-                                  ? 18.0
-                                  : 24.0,
-                            ),
-                          ),
-                          SizedBox(
-                              height: MediaQuery.of(context).size.width < 400
-                                  ? 6.0
-                                  : 8.0),
-                          Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal:
-                                  MediaQuery.of(context).size.width < 400
-                                      ? 6.0
-                                      : 8.0,
-                              vertical: MediaQuery.of(context).size.width < 400
-                                  ? 3.0
-                                  : 4.0,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              '${_gameState!['deck']?.length ?? 0}',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize:
-                                    MediaQuery.of(context).size.width < 400
-                                        ? 12.0
-                                        : 14.0,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    // Discard pile - Always visible and prominent
-                    Container(
-                      width:
-                          MediaQuery.of(context).size.width < 400 ? 60.0 : 70.0,
-                      height: MediaQuery.of(context).size.width < 400
-                          ? 85.0
-                          : 100.0,
-                      child: discardPile.isNotEmpty
-                          ? _buildCard(discardPile.last, isPlayable: false)
-                          : Container(
-                              decoration: BoxDecoration(
-                                color: Colors.grey.withOpacity(0.3),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                    color: Colors.white.withOpacity(0.5),
-                                    width: 2),
-                              ),
-                              child: Center(
-                                child: Icon(
-                                  Icons.inbox,
-                                  color: Colors.white.withOpacity(0.6),
-                                  size: MediaQuery.of(context).size.width < 400
-                                      ? 24.0
-                                      : 30.0,
-                                ),
-                              ),
-                            ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Current color indicator
-              if (gameStarted)
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 24, vertical: 16),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          Colors.white.withOpacity(0.3),
-                          Colors.white.withOpacity(0.1),
-                        ],
-                      ),
-                      borderRadius: BorderRadius.circular(25),
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.6),
-                        width: 2,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 8,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'Current Color: ',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                            shadows: [
-                              Shadow(
-                                color: Colors.black,
-                                offset: Offset(1, 1),
-                                blurRadius: 2,
-                              ),
-                            ],
-                          ),
-                        ),
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                _getCardColor(currentColor),
-                                _getCardColor(currentColor).withOpacity(0.8),
-                              ],
-                            ),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: Colors.white,
-                              width: 3,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.3),
-                                blurRadius: 6,
-                                offset: const Offset(0, 3),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-              // My cards
-              Container(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 20, vertical: 12),
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            Colors.white.withOpacity(0.4),
-                            Colors.white.withOpacity(0.2),
-                          ],
-                        ),
-                        borderRadius: BorderRadius.circular(25),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.8),
-                          width: 2,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.3),
-                            blurRadius: 10,
-                            offset: const Offset(0, 5),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: BoxDecoration(
-                              color: Colors.green.withOpacity(0.8),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Icon(
-                              Icons.person,
-                              color: Colors.white,
-                              size: 18,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '${widget.playerName} (You)',
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                              shadows: [
-                                Shadow(
-                                  color: Colors.black,
-                                  offset: Offset(1, 1),
-                                  blurRadius: 2,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    if (myPlayer != null) ...[
-                      Container(
-                        height: MediaQuery.of(context).size.width < 400
-                            ? 100.0
-                            : 120.0,
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: List.generate(
-                              myPlayer['cards'].length,
-                              (index) => _buildCard(
-                                myPlayer['cards'][index],
-                                isPlayable: _isCardPlayable(
-                                    myPlayer['cards'][index], _gameState!),
-                                onTap: gameStarted && isMyTurn
-                                    ? () => _playCard(index)
-                                    : null,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      if (gameStarted && isMyTurn)
-                        SizedBox(
-                          width: double.infinity,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  Color(0xFFED8936), // Orange
-                                  Color(0xFFDD6B20), // Dark orange
-                                ],
-                              ),
-                              borderRadius: BorderRadius.circular(15),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.3),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: ElevatedButton(
-                              onPressed: _drawCard,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.transparent,
-                                foregroundColor: Colors.white,
-                                shadowColor: Colors.transparent,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 16),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(15),
-                                ),
-                              ),
-                              child: const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Icon(Icons.add_circle_outline, size: 24),
-                                  SizedBox(width: 8),
+                                  if (isMyTurn) ...[
+                                    Icon(
+                                      Icons.play_arrow,
+                                      color: Colors.white,
+                                      size: isMobile ? 20 : 24,
+                                    ),
+                                    SizedBox(width: spacing / 2),
+                                  ],
                                   Text(
-                                    'Draw Card',
+                                    isMyTurn
+                                        ? 'YOUR TURN!'
+                                        : '${currentPlayer['name']}\'s turn',
                                     style: TextStyle(
-                                      fontSize: 18,
+                                      fontSize: isMobile ? 16 : 20,
                                       fontWeight: FontWeight.bold,
+                                      color: isMyTurn
+                                          ? Colors.white
+                                          : Colors.white,
+                                      shadows: [
+                                        Shadow(
+                                          color: Colors.black.withOpacity(0.5),
+                                          offset: const Offset(1, 1),
+                                          blurRadius: 2,
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ],
                               ),
                             ),
                           ),
-                        ),
-                    ],
-                  ],
-                ),
-              ),
 
-              // Start game button
-              if (!gameStarted && players.length == 2)
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            Color(0xFF48BB78), // Green
-                            Color(0xFF38A169), // Dark green
-                          ],
-                        ),
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.3),
-                            blurRadius: 12,
-                            offset: const Offset(0, 6),
+                        // Game center area
+                        Container(
+                          height: MobileConfig.getGameCenterHeight(context),
+                          padding: EdgeInsets.all(spacing),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              // Draw pile
+                              Container(
+                                width: cardDimensions.width * 0.75,
+                                height: cardDimensions.height * 0.85,
+                                decoration: BoxDecoration(
+                                  gradient: const LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [
+                                      Color(0xFF2D3748),
+                                      Color(0xFF4A5568),
+                                      Color(0xFF2D3748),
+                                    ],
+                                  ),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border:
+                                      Border.all(color: Colors.white, width: 2),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.4),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Container(
+                                      width:
+                                          isMobile ? 28 : (isTablet ? 36 : 40),
+                                      height:
+                                          isMobile ? 28 : (isTablet ? 36 : 40),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(
+                                            isMobile
+                                                ? 14
+                                                : (isTablet ? 18 : 20)),
+                                        border: Border.all(
+                                          color: Colors.white.withOpacity(0.3),
+                                          width: 2,
+                                        ),
+                                      ),
+                                      child: Icon(
+                                        Icons.style,
+                                        color: Colors.white,
+                                        size: isMobile
+                                            ? 16
+                                            : (isTablet ? 20 : 24),
+                                      ),
+                                    ),
+                                    SizedBox(
+                                        height:
+                                            isMobile ? 4 : (isTablet ? 6 : 8)),
+                                    Container(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal:
+                                            isMobile ? 4 : (isTablet ? 6 : 8),
+                                        vertical:
+                                            isMobile ? 2 : (isTablet ? 3 : 4),
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withOpacity(0.2),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Text(
+                                        '${_gameState!['deck']?.length ?? 0}',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: isMobile
+                                              ? 10
+                                              : (isTablet ? 12 : 14),
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              // Discard pile
+                              Container(
+                                width: cardDimensions.width * 0.75,
+                                height: cardDimensions.height * 0.85,
+                                child: discardPile.isNotEmpty
+                                    ? _buildCard(discardPile.last,
+                                        isPlayable: false)
+                                    : Container(
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey.withOpacity(0.3),
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                          border: Border.all(
+                                              color:
+                                                  Colors.white.withOpacity(0.5),
+                                              width: 2),
+                                        ),
+                                        child: Center(
+                                          child: Icon(
+                                            Icons.inbox,
+                                            color:
+                                                Colors.white.withOpacity(0.6),
+                                            size: isMobile
+                                                ? 20
+                                                : (isTablet ? 26 : 30),
+                                          ),
+                                        ),
+                                      ),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
-                      child: ElevatedButton(
-                        onPressed: _startGame,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.transparent,
-                          foregroundColor: Colors.white,
-                          shadowColor: Colors.transparent,
-                          padding: const EdgeInsets.symmetric(vertical: 20),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                          ),
                         ),
-                        child: const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.play_circle_filled, size: 28),
-                            SizedBox(width: 12),
-                            Text(
-                              'Start Game',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
+
+                        // Current color indicator
+                        if (gameStarted)
+                          Container(
+                            padding: EdgeInsets.all(spacing),
+                            child: Container(
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: spacing * 1.5, vertical: spacing),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [
+                                    Colors.white.withOpacity(0.3),
+                                    Colors.white.withOpacity(0.1),
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(25),
+                                border: Border.all(
+                                  color: Colors.white.withOpacity(0.6),
+                                  width: 2,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.2),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    'Current Color: ',
+                                    style: TextStyle(
+                                      fontSize: isMobile ? 16 : 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                      shadows: [
+                                        Shadow(
+                                          color: Colors.black,
+                                          offset: Offset(1, 1),
+                                          blurRadius: 2,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Container(
+                                    width: isMobile ? 32 : (isTablet ? 36 : 40),
+                                    height:
+                                        isMobile ? 32 : (isTablet ? 36 : 40),
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: [
+                                          _getCardColor(currentColor),
+                                          _getCardColor(currentColor)
+                                              .withOpacity(0.8),
+                                        ],
+                                      ),
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(
+                                        color: Colors.white,
+                                        width: 3,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.3),
+                                          blurRadius: 6,
+                                          offset: const Offset(0, 3),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                          ],
+                          ),
+
+                        // My cards
+                        Container(
+                          padding: EdgeInsets.all(spacing),
+                          child: Column(
+                            children: [
+                              Container(
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: spacing * 1.25,
+                                    vertical: spacing * 0.75),
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [
+                                      Colors.white.withOpacity(0.4),
+                                      Colors.white.withOpacity(0.2),
+                                    ],
+                                  ),
+                                  borderRadius: BorderRadius.circular(25),
+                                  border: Border.all(
+                                    color: Colors.white.withOpacity(0.8),
+                                    width: 2,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.3),
+                                      blurRadius: 10,
+                                      offset: const Offset(0, 5),
+                                    ),
+                                  ],
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      padding: EdgeInsets.all(4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.green.withOpacity(0.8),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Icon(
+                                        Icons.person,
+                                        color: Colors.white,
+                                        size: isMobile ? 16 : 18,
+                                      ),
+                                    ),
+                                    SizedBox(width: spacing / 2),
+                                    Text(
+                                      '${widget.playerName} (You)',
+                                      style: TextStyle(
+                                        fontSize: isMobile ? 16 : 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                        shadows: [
+                                          Shadow(
+                                            color: Colors.black,
+                                            offset: Offset(1, 1),
+                                            blurRadius: 2,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              SizedBox(height: spacing),
+                              if (myPlayer != null) ...[
+                                Container(
+                                  height: MobileConfig.getPlayerCardsHeight(
+                                      context),
+                                  child: SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: List.generate(
+                                        myPlayer['cards'].length,
+                                        (index) => _buildCard(
+                                          myPlayer['cards'][index],
+                                          isPlayable: _isCardPlayable(
+                                              myPlayer['cards'][index],
+                                              _gameState!),
+                                          onTap: gameStarted && isMyTurn
+                                              ? () => _playCard(index)
+                                              : null,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(height: spacing * 1.25),
+                                if (gameStarted && isMyTurn)
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        gradient: const LinearGradient(
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                          colors: [
+                                            Color(0xFFED8936), // Orange
+                                            Color(0xFFDD6B20), // Dark orange
+                                          ],
+                                        ),
+                                        borderRadius: BorderRadius.circular(15),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color:
+                                                Colors.black.withOpacity(0.3),
+                                            blurRadius: 8,
+                                            offset: const Offset(0, 4),
+                                          ),
+                                        ],
+                                      ),
+                                      child: ElevatedButton(
+                                        onPressed: _drawCard,
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.transparent,
+                                          foregroundColor: Colors.white,
+                                          shadowColor: Colors.transparent,
+                                          padding: EdgeInsets.symmetric(
+                                              vertical: spacing),
+                                          minimumSize: Size(0, buttonHeight),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius:
+                                                BorderRadius.circular(15),
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
+                                          children: [
+                                            Icon(Icons.add_circle_outline,
+                                                size: isMobile ? 20 : 24),
+                                            SizedBox(width: spacing / 2),
+                                            Text(
+                                              'Draw Card',
+                                              style: TextStyle(
+                                                fontSize: isMobile ? 16 : 18,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ],
+                          ),
                         ),
-                      ),
+
+                        // Start game button
+                        if (!gameStarted && players.length == 2)
+                          Container(
+                            padding: EdgeInsets.all(spacing),
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  gradient: const LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [
+                                      Color(0xFF48BB78), // Green
+                                      Color(0xFF38A169), // Dark green
+                                    ],
+                                  ),
+                                  borderRadius: BorderRadius.circular(20),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.3),
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 6),
+                                    ),
+                                  ],
+                                ),
+                                child: ElevatedButton(
+                                  onPressed: _startGame,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.transparent,
+                                    foregroundColor: Colors.white,
+                                    shadowColor: Colors.transparent,
+                                    padding: EdgeInsets.symmetric(
+                                        vertical: spacing * 1.25),
+                                    minimumSize: Size(0, buttonHeight),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.play_circle_filled,
+                                          size: isMobile ? 24 : 28),
+                                      SizedBox(width: isMobile ? 8 : 12),
+                                      Text(
+                                        'Start Game',
+                                        style: TextStyle(
+                                          fontSize: isMobile ? 18 : 20,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+
+                        // Responsive bottom padding
+                        SizedBox(height: bottomPadding),
+                      ],
                     ),
                   ),
                 ),
-
-              // Add bottom padding to prevent cutoff on mobile devices
-              SizedBox(height: MediaQuery.of(context).padding.bottom + 20),
-            ],
+              );
+            },
           ),
         ),
       ),

@@ -1,28 +1,37 @@
 import 'package:flutter/material.dart';
 
 class MobileConfig {
-  // Responsive breakpoints
+  // Responsive breakpoints - updated for better mobile/tablet/desktop distinction
   static const double mobileBreakpoint = 600;
   static const double tabletBreakpoint = 900;
   static const double desktopBreakpoint = 1200;
 
-  // Card dimensions for different screen sizes
-  static const double mobileCardWidth = 60;
+  // Card dimensions for different screen sizes - optimized for UNO game
+  static const double mobileCardWidth = 65;
   static const double mobileCardHeight = 90;
-  static const double tabletCardWidth = 70;
+  static const double tabletCardWidth = 75;
   static const double tabletCardHeight = 105;
-  static const double desktopCardWidth = 80;
+  static const double desktopCardWidth = 85;
   static const double desktopCardHeight = 120;
 
   // Spacing for different screen sizes
   static const double mobileSpacing = 16.0;
-  static const double tabletSpacing = 24.0;
-  static const double desktopSpacing = 32.0;
+  static const double tabletSpacing = 20.0;
+  static const double desktopSpacing = 24.0;
 
   // Button heights for touch targets
   static const double mobileButtonHeight = 48.0;
   static const double tabletButtonHeight = 56.0;
   static const double desktopButtonHeight = 64.0;
+
+  // Game-specific responsive values
+  static const double mobileGameCenterHeight = 100.0;
+  static const double tabletGameCenterHeight = 120.0;
+  static const double desktopGameCenterHeight = 140.0;
+
+  static const double mobilePlayerCardsHeight = 90.0;
+  static const double tabletPlayerCardsHeight = 110.0;
+  static const double desktopPlayerCardsHeight = 130.0;
 
   // Get responsive card dimensions
   static Size getCardDimensions(BuildContext context) {
@@ -57,6 +66,30 @@ class MobileConfig {
       return tabletButtonHeight;
     } else {
       return desktopButtonHeight;
+    }
+  }
+
+  // Get responsive game center height
+  static double getGameCenterHeight(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    if (width < mobileBreakpoint) {
+      return mobileGameCenterHeight;
+    } else if (width < tabletBreakpoint) {
+      return tabletGameCenterHeight;
+    } else {
+      return desktopGameCenterHeight;
+    }
+  }
+
+  // Get responsive player cards height
+  static double getPlayerCardsHeight(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    if (width < mobileBreakpoint) {
+      return mobilePlayerCardsHeight;
+    } else if (width < tabletBreakpoint) {
+      return tabletPlayerCardsHeight;
+    } else {
+      return desktopPlayerCardsHeight;
     }
   }
 
@@ -174,6 +207,84 @@ class MobileConfig {
           40; // Extra buffer
     } else {
       return 0;
+    }
+  }
+
+  // Get responsive card scaling factors for opponent cards
+  static Map<String, double> getOpponentCardScaling(
+      BuildContext context, int cardCount) {
+    final isMobileDevice = isMobile(context);
+    final isTabletDevice = isTablet(context);
+
+    if (isMobileDevice) {
+      if (cardCount <= 4) {
+        return {'width': 0.75, 'height': 0.7, 'margin': 1.0};
+      } else if (cardCount <= 6) {
+        return {'width': 0.67, 'height': 0.62, 'margin': 0.75};
+      } else if (cardCount <= 8) {
+        return {'width': 0.58, 'height': 0.54, 'margin': 0.5};
+      } else {
+        return {'width': 0.5, 'height': 0.47, 'margin': 0.25};
+      }
+    } else if (isTabletDevice) {
+      if (cardCount <= 4) {
+        return {'width': 0.85, 'height': 0.8, 'margin': 1.5};
+      } else if (cardCount <= 6) {
+        return {'width': 0.75, 'height': 0.7, 'margin': 1.25};
+      } else if (cardCount <= 8) {
+        return {'width': 0.67, 'height': 0.62, 'margin': 1.0};
+      } else {
+        return {'width': 0.58, 'height': 0.54, 'margin': 0.75};
+      }
+    } else {
+      if (cardCount <= 4) {
+        return {'width': 0.9, 'height': 0.85, 'margin': 2.0};
+      } else if (cardCount <= 6) {
+        return {'width': 0.8, 'height': 0.75, 'margin': 1.75};
+      } else if (cardCount <= 8) {
+        return {'width': 0.7, 'height': 0.65, 'margin': 1.5};
+      } else {
+        return {'width': 0.6, 'height': 0.55, 'margin': 1.25};
+      }
+    }
+  }
+
+  // Get responsive player card scaling factors
+  static Map<String, double> getPlayerCardScaling(
+      BuildContext context, int cardCount) {
+    final isMobileDevice = isMobile(context);
+    final isTabletDevice = isTablet(context);
+
+    if (isMobileDevice) {
+      if (cardCount <= 4) {
+        return {'width': 0.9, 'height': 0.9, 'margin': 2.0};
+      } else if (cardCount <= 6) {
+        return {'width': 0.8, 'height': 0.8, 'margin': 1.5};
+      } else if (cardCount <= 8) {
+        return {'width': 0.7, 'height': 0.7, 'margin': 1.0};
+      } else {
+        return {'width': 0.6, 'height': 0.6, 'margin': 0.5};
+      }
+    } else if (isTabletDevice) {
+      if (cardCount <= 4) {
+        return {'width': 0.95, 'height': 0.95, 'margin': 3.0};
+      } else if (cardCount <= 6) {
+        return {'width': 0.85, 'height': 0.85, 'margin': 2.5};
+      } else if (cardCount <= 8) {
+        return {'width': 0.75, 'height': 0.75, 'margin': 2.0};
+      } else {
+        return {'width': 0.65, 'height': 0.65, 'margin': 1.5};
+      }
+    } else {
+      if (cardCount <= 4) {
+        return {'width': 1.0, 'height': 1.0, 'margin': 4.0};
+      } else if (cardCount <= 6) {
+        return {'width': 0.9, 'height': 0.9, 'margin': 3.5};
+      } else if (cardCount <= 8) {
+        return {'width': 0.8, 'height': 0.8, 'margin': 3.0};
+      } else {
+        return {'width': 0.7, 'height': 0.7, 'margin': 2.5};
+      }
     }
   }
 }
