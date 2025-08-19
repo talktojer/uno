@@ -1,6 +1,17 @@
 # UNO Game - Two Player Clone
 
-A complete two-player UNO card game implementation built with FastAPI backend and Flutter frontend.
+A complete two-player UNO card game implementation built with FastAPI backend and Flutter frontend, featuring an **intuitive and streamlined game joining process**.
+
+## ✨ New Features & Improvements
+
+### 🎯 **Revamped Game Joining Experience**
+- **Progressive disclosure** interface that guides users step-by-step
+- **Mobile-first design** with touch-friendly interactions
+- **Simplified workflow** - no more confusing multiple input fields
+- **Clear visual hierarchy** with logical action grouping
+- **Streamlined rejoin process** for disconnected players
+
+> 📖 **See [Game Joining UX Improvements](GAME_JOINING_UX_IMPROVEMENTS.md) for detailed documentation**
 
 ## Features
 
@@ -10,6 +21,7 @@ A complete two-player UNO card game implementation built with FastAPI backend an
 - **Two Player Support**: Perfect for head-to-head matches
 - **All Card Types**: Numbers, Skip, Reverse, Draw2, Wild, and Wild Draw4
 - **Responsive Design**: Works on desktop and mobile
+- **Intuitive UX**: Streamlined game joining and management
 
 ## Game Rules
 
@@ -27,8 +39,8 @@ The game follows standard UNO rules:
 ## Architecture
 
 - **Backend**: FastAPI with WebSocket support
-- **Frontend**: Flutter web application
-- **Real-time Updates**: Polling-based game state synchronization
+- **Frontend**: Flutter web application with mobile-first design
+- **Real-time Updates**: WebSocket-based game state synchronization
 - **Docker**: Containerized deployment
 
 ## Prerequisites
@@ -73,14 +85,25 @@ The game follows standard UNO rules:
 
 ## How to Play
 
-1. **Create a Game**: Click "Create Game" to start a new UNO game
-2. **Join the Game**: Enter your name and click "Join Game"
-3. **Start Playing**: Once both players join, click "Start Game"
-4. **Gameplay**: 
-   - Click on playable cards to play them
-   - Use "Draw Card" button when you can't play
-   - Match colors, numbers, or action types
-   - First to play all cards wins!
+### 🆕 **New Improved Flow**
+
+1. **Enter Your Name**: Start by entering your player name
+2. **Choose Action**: Select what you want to do:
+   - **Create New Game**: Start a new UNO game
+   - **Join Existing Game**: Enter a game code to join
+   - **Rejoin Game**: Reconnect to a game you were playing
+3. **Follow the Prompts**: Each action has clear, step-by-step guidance
+4. **Start Playing**: Once both players join, click "Start Game"
+
+### Traditional Flow (Still Supported)
+- **Create a Game**: Click "Create Game" to start a new UNO game
+- **Join the Game**: Enter your name and click "Join Game"
+- **Start Playing**: Once both players join, click "Start Game"
+- **Gameplay**: 
+  - Click on playable cards to play them
+  - Use "Draw Card" button when you can't play
+  - Match colors, numbers, or action types
+  - First to play all cards wins!
 
 ## API Endpoints
 
@@ -111,7 +134,8 @@ backend/
 ```
 frontend/
 ├── lib/
-│   └── main.dart       # Main Flutter application
+│   ├── main.dart       # Main Flutter application
+│   └── config/         # Mobile and responsive configuration
 ├── pubspec.yaml        # Flutter dependencies
 └── Dockerfile          # Frontend container configuration
 ```
@@ -121,8 +145,9 @@ frontend/
 - **UNOGame Class**: Complete game logic implementation
 - **Card System**: All UNO card types with proper rules
 - **Player Management**: Turn-based gameplay with validation
-- **Real-time Updates**: Polling-based state synchronization
+- **Real-time Updates**: WebSocket-based state synchronization
 - **Beautiful UI**: Card animations and modern design
+- **Responsive Design**: Mobile-first approach with adaptive layouts
 
 ## Customization
 
@@ -181,7 +206,8 @@ This project is open source and available under the MIT License.
 - UNO is a trademark of Mattel
 - Built with FastAPI and Flutter
 - Inspired by classic card game mechanics
+- UX improvements based on modern design principles
 
 ---
 
-**Enjoy playing UNO!** 🃏🎨
+**Enjoy playing UNO with the new improved experience!** 🃏🎨✨

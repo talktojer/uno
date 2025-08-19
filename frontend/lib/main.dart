@@ -202,7 +202,6 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _playerNameController = TextEditingController();
-  final TextEditingController _gameIdController = TextEditingController();
   final TextEditingController _gameCodeController = TextEditingController();
   String? _gameId;
   String? _playerId;
@@ -210,13 +209,18 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _availableGames = [];
   WebSocketManager? _lobbyWebSocket;
 
+  // New state variables for improved UX
+  bool _showCreateGameSection = false;
+  bool _showJoinGameSection = false;
+  bool _showRejoinSection = false;
+  String? _selectedAction;
+
   // Helper method for consistent border radius
-  static BorderRadius get _borderRadius => BorderRadius.circular(8);
+  static BorderRadius get _borderRadius => BorderRadius.circular(12);
 
   @override
   void dispose() {
     _playerNameController.dispose();
-    _gameIdController.dispose();
     _gameCodeController.dispose();
     _lobbyWebSocket?.disconnect();
     super.dispose();
@@ -260,6 +264,10 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _gameCodeController.clear();
       _gameId = null;
+      _selectedAction = null;
+      _showCreateGameSection = false;
+      _showJoinGameSection = false;
+      _showRejoinSection = false;
     });
 
     // Navigate back to home without game code
@@ -518,6 +526,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _createGame() async {
+    if (_playerNameController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Please enter your name first'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.orange,
+          shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _isLoading = true;
     });
@@ -530,6 +550,8 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _gameId = data['game_id'];
           _gameCodeController.text = data['game_code'];
+          _showCreateGameSection = true;
+          _selectedAction = 'create';
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -544,78 +566,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error creating game: $e'),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.red,
-          shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-        ),
-      );
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
-    }
-  }
-
-  Future<void> _joinGame() async {
-    if (_gameIdController.text.isEmpty || _playerNameController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Please enter both game ID and your name'),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.orange,
-          shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-        ),
-      );
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final response = await http.post(
-        Uri.parse('$apiBaseUrl/api/games/${_gameIdController.text}/join'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'player_name': _playerNameController.text}),
-      );
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        setState(() {
-          _playerId = data['player_id'];
-          _gameId = _gameIdController.text;
-        });
-
-        // Navigate to game screen
-        if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => GameScreen(
-                gameId: _gameId!,
-                playerId: _playerId!,
-                playerName: _playerNameController.text,
-              ),
-            ),
-          );
-        }
-      } else {
-        final errorData = json.decode(response.body);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content:
-                Text('Error: ${errorData['detail'] ?? 'Failed to join game'}'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.red,
-            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-          ),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error joining game: $e'),
           behavior: SnackBarBehavior.floating,
           backgroundColor: Colors.red,
           shape: RoundedRectangleBorder(borderRadius: _borderRadius),
@@ -815,6 +765,27 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // New helper methods for improved UX
+  void _selectAction(String action) {
+    setState(() {
+      _selectedAction = action;
+      _showCreateGameSection = action == 'create';
+      _showJoinGameSection = action == 'join';
+      _showRejoinSection = action == 'rejoin';
+    });
+  }
+
+  void _resetToMainMenu() {
+    setState(() {
+      _selectedAction = null;
+      _showCreateGameSection = false;
+      _showJoinGameSection = false;
+      _showRejoinSection = false;
+      _gameId = null;
+      _gameCodeController.clear();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
@@ -825,6 +796,7 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('UNO Game'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         elevation: 0,
+        centerTitle: true,
       ),
       body: Container(
         decoration: const BoxDecoration(
@@ -835,480 +807,773 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         child: SafeArea(
-          bottom: false, // Don't add bottom safe area padding
+          bottom: false,
           child: SingleChildScrollView(
             padding: EdgeInsets.only(
               left: isSmallScreen ? 16.0 : 24.0,
               right: isSmallScreen ? 16.0 : 24.0,
               top: isSmallScreen ? 16.0 : 24.0,
-              bottom: isSmallScreen
-                  ? 32.0
-                  : 48.0, // Extra bottom padding for mobile
+              bottom: isSmallScreen ? 32.0 : 48.0,
             ),
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 500),
-                child: Card(
-                  elevation: 8,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Padding(
-                    padding: EdgeInsets.all(isSmallScreen ? 20.0 : 30.0),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // Logo and Title
-                        Container(
-                          padding: const EdgeInsets.all(20),
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(20),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.1),
-                                blurRadius: 10,
-                                offset: const Offset(0, 5),
-                              ),
-                            ],
-                          ),
-                          child: const Column(
-                            children: [
-                              Text(
-                                'UNO',
-                                style: TextStyle(
-                                  fontSize: 48,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.blue,
-                                ),
-                              ),
-                              SizedBox(height: 8),
-                              Text(
-                                'Two Player Game',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  color: Colors.grey,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                child: Column(
+                  children: [
+                    // Logo and Title Section
+                    _buildLogoSection(),
 
-                        const SizedBox(height: 30),
+                    const SizedBox(height: 24),
 
-                        // Player Name Input
-                        TextField(
-                          controller: _playerNameController,
-                          decoration: const InputDecoration(
-                            labelText: 'Your Name',
-                            border: OutlineInputBorder(),
-                            prefixIcon: Icon(Icons.person),
-                            hintText: 'Enter your name',
-                          ),
-                          textInputAction: TextInputAction.next,
-                        ),
+                    // Player Name Input (Always visible)
+                    _buildPlayerNameSection(),
 
-                        const SizedBox(height: 20),
+                    const SizedBox(height: 24),
 
-                        // Game Code Input
-                        TextField(
-                          controller: _gameCodeController,
-                          decoration: const InputDecoration(
-                            labelText: 'Game Code (5 characters)',
-                            border: OutlineInputBorder(),
-                            prefixIcon: Icon(Icons.qr_code),
-                            hintText: 'Enter 5-character game code',
-                          ),
-                          textInputAction: TextInputAction.done,
-                          maxLength: 5,
-                          textCapitalization: TextCapitalization.characters,
-                        ),
+                    // Main Action Selection (if no action selected)
+                    if (_selectedAction == null) _buildMainActionSelection(),
 
-                        const SizedBox(height: 20),
+                    // Create Game Section
+                    if (_showCreateGameSection) _buildCreateGameSection(),
 
-                        // Rejoin Game Section
-                        Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: Colors.orange.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.orange),
-                          ),
-                          child: Column(
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(Icons.replay,
-                                      color: Colors.orange),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    'Rejoin Game',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.orange[700],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Reconnect to a game you were playing',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.orange[600],
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton(
-                                  onPressed: _isLoading ? null : _rejoinGame,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.orange,
-                                    foregroundColor: Colors.white,
-                                  ),
-                                  child: Text(_isLoading
-                                      ? 'Rejoining...'
-                                      : 'Rejoin Game'),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                    // Join Game Section
+                    if (_showJoinGameSection) _buildJoinGameSection(),
 
-                        const SizedBox(height: 20),
+                    // Rejoin Game Section
+                    if (_showRejoinSection) _buildRejoinGameSection(),
 
-                        // Game ID Input (for backward compatibility)
-                        TextField(
-                          controller: _gameIdController,
-                          decoration: const InputDecoration(
-                            labelText: 'Game ID (to join existing game)',
-                            border: OutlineInputBorder(),
-                            prefixIcon: Icon(Icons.games),
-                            hintText: 'Enter game ID to join',
-                          ),
-                          textInputAction: TextInputAction.done,
-                        ),
-
-                        const SizedBox(height: 30),
-
-                        // Action Buttons
-                        if (isSmallScreen) ...[
-                          // Stacked buttons for small screens
-                          Column(
-                            children: [
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton(
-                                  onPressed: _isLoading ? null : _createGame,
-                                  child: Text(_isLoading
-                                      ? 'Creating...'
-                                      : 'Create Game'),
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton(
-                                  onPressed:
-                                      _isLoading ? null : _joinGameByCode,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.green,
-                                    foregroundColor: Colors.white,
-                                  ),
-                                  child: Text(_isLoading
-                                      ? 'Joining...'
-                                      : 'Join by Code'),
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton(
-                                  onPressed: _isLoading ? null : _joinGame,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.blue,
-                                    foregroundColor: Colors.white,
-                                  ),
-                                  child: Text(_isLoading
-                                      ? 'Joining...'
-                                      : 'Join by Game ID'),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ] else ...[
-                          // Side-by-side buttons for larger screens
-                          Row(
-                            children: [
-                              Expanded(
-                                child: ElevatedButton(
-                                  onPressed: _isLoading ? null : _createGame,
-                                  child: Text(_isLoading
-                                      ? 'Creating...'
-                                      : 'Create Game'),
-                                ),
-                              ),
-                              const SizedBox(width: 20),
-                              Expanded(
-                                child: ElevatedButton(
-                                  onPressed:
-                                      _isLoading ? null : _joinGameByCode,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.green,
-                                    foregroundColor: Colors.white,
-                                  ),
-                                  child: Text(_isLoading
-                                      ? 'Joining...'
-                                      : 'Join by Code'),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 20),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              onPressed: _isLoading ? null : _joinGame,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blue,
-                                foregroundColor: Colors.white,
-                              ),
-                              child: Text(_isLoading
-                                  ? 'Joining...'
-                                  : 'Join by Game ID'),
-                            ),
-                          ),
-                        ],
-
-                        // Game Code Display
-                        if (_gameId != null) ...[
-                          const SizedBox(height: 20),
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.green.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.green),
-                            ),
-                            child: Column(
-                              children: [
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    const Icon(Icons.check_circle,
-                                        color: Colors.green),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      'Game Code: ${_gameCodeController.text}',
-                                      style: const TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.green,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Share this code with others to join your game!',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.green[700],
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                                const SizedBox(height: 8),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      'Full URL: $baseUrl/${_gameCodeController.text}',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.green[600],
-                                        fontFamily: 'monospace',
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    IconButton(
-                                      icon: const Icon(Icons.copy,
-                                          color: Colors.green),
-                                      onPressed: () {
-                                        // Copy to clipboard
-                                        final url =
-                                            '$baseUrl/${_gameCodeController.text}';
-                                        html.window.navigator.clipboard
-                                            ?.writeText(url);
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          SnackBar(
-                                            content: const Text(
-                                                'Game URL copied to clipboard!'),
-                                            behavior: SnackBarBehavior.floating,
-                                            backgroundColor: Colors.green,
-                                            shape: RoundedRectangleBorder(
-                                                borderRadius: _borderRadius),
-                                          ),
-                                        );
-                                      },
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-
-                        const SizedBox(height: 30),
-
-                        // Available Games Section
-                        if (_availableGames.isNotEmpty) ...[
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: Colors.blue.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.blue),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    const Icon(Icons.list, color: Colors.blue),
-                                    const SizedBox(width: 8),
-                                    const Text(
-                                      'Available Games:',
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.blue,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 16),
-                                SizedBox(
-                                  height: 150,
-                                  child: ListView.builder(
-                                    itemCount: _availableGames.length,
-                                    itemBuilder: (context, index) {
-                                      final game = _availableGames[index];
-                                      return Card(
-                                        margin:
-                                            const EdgeInsets.only(bottom: 8),
-                                        child: ListTile(
-                                          title: Text(
-                                            'Game Code: ${game['game_code'] ?? 'N/A'}',
-                                            style: const TextStyle(
-                                                fontWeight: FontWeight.w600),
-                                          ),
-                                          subtitle: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                'Status: ${game['status']} (${game['active_players'] ?? game['player_count']}/2 players)',
-                                              ),
-                                              if (game['game_id'] != null)
-                                                Text(
-                                                  'Game ID: ${game['game_id']}',
-                                                  style: TextStyle(
-                                                    fontSize: 12,
-                                                    color: Colors.grey[600],
-                                                    fontFamily: 'monospace',
-                                                  ),
-                                                ),
-                                            ],
-                                          ),
-                                          trailing: (game['status'] ==
-                                                      'waiting' ||
-                                                  game['status'] ==
-                                                      'waiting_for_replacement')
-                                              ? Row(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  children: [
-                                                    IconButton(
-                                                      icon: const Icon(
-                                                          Icons.copy,
-                                                          color: Colors.blue),
-                                                      onPressed: () {
-                                                        _gameCodeController
-                                                                .text =
-                                                            game['game_code'] ??
-                                                                '';
-                                                        ScaffoldMessenger.of(
-                                                                context)
-                                                            .showSnackBar(
-                                                          SnackBar(
-                                                            content: Text(
-                                                                'Game code ${game['game_code']} copied to input field'),
-                                                            behavior:
-                                                                SnackBarBehavior
-                                                                    .floating,
-                                                            backgroundColor:
-                                                                Colors.blue,
-                                                            shape: RoundedRectangleBorder(
-                                                                borderRadius:
-                                                                    _borderRadius),
-                                                          ),
-                                                        );
-                                                      },
-                                                    ),
-                                                    IconButton(
-                                                      icon: const Icon(
-                                                          Icons.play_arrow,
-                                                          color: Colors.green),
-                                                      onPressed: () {
-                                                        _gameCodeController
-                                                                .text =
-                                                            game['game_code'] ??
-                                                                '';
-                                                        ScaffoldMessenger.of(
-                                                                context)
-                                                            .showSnackBar(
-                                                          SnackBar(
-                                                            content: Text(
-                                                                'Game code ${game['game_code']} copied to input field'),
-                                                            behavior:
-                                                                SnackBarBehavior
-                                                                    .floating,
-                                                            backgroundColor:
-                                                                Colors.green,
-                                                            shape: RoundedRectangleBorder(
-                                                                borderRadius:
-                                                                    _borderRadius),
-                                                          ),
-                                                        );
-                                                      },
-                                                    ),
-                                                  ],
-                                                )
-                                              : null,
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+                    // Available Games Section (if any)
+                    if (_availableGames.isNotEmpty) ...[
+                      const SizedBox(height: 24),
+                      _buildAvailableGamesSection(),
+                    ],
+                  ],
                 ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildLogoSection() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: const Column(
+        children: [
+          Text(
+            'UNO',
+            style: TextStyle(
+              fontSize: 48,
+              fontWeight: FontWeight.bold,
+              color: Colors.blue,
+            ),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'Two Player Game',
+            style: TextStyle(
+              fontSize: 18,
+              color: Colors.grey,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlayerNameSection() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.person, color: Colors.blue),
+              SizedBox(width: 12),
+              Text(
+                'Your Name',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[800],
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 16),
+          TextField(
+            controller: _playerNameController,
+            decoration: InputDecoration(
+              hintText: 'Enter your name to start',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              filled: true,
+              fillColor: Colors.grey[50],
+              prefixIcon: Icon(Icons.edit, color: Colors.blue),
+            ),
+            textInputAction: TextInputAction.done,
+            onChanged: (value) {
+              // Enable/disable action buttons based on name input
+              setState(() {});
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMainActionSelection() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'What would you like to do?',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.grey[800],
+            ),
+          ),
+          SizedBox(height: 20),
+
+          // Create Game Button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _playerNameController.text.trim().isNotEmpty
+                  ? () => _selectAction('create')
+                  : null,
+              icon: Icon(Icons.add_circle_outline, size: 24),
+              label: Text(
+                'Create New Game',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 4,
+              ),
+            ),
+          ),
+
+          SizedBox(height: 16),
+
+          // Join Game Button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _playerNameController.text.trim().isNotEmpty
+                  ? () => _selectAction('join')
+                  : null,
+              icon: Icon(Icons.login, size: 24),
+              label: Text(
+                'Join Existing Game',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 4,
+              ),
+            ),
+          ),
+
+          SizedBox(height: 16),
+
+          // Rejoin Game Button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _playerNameController.text.trim().isNotEmpty
+                  ? () => _selectAction('rejoin')
+                  : null,
+              icon: Icon(Icons.replay, size: 24),
+              label: Text(
+                'Rejoin Game',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCreateGameSection() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.add_circle_outline, color: Colors.green),
+              SizedBox(width: 12),
+              Text(
+                'Create New Game',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[800],
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Create a new UNO game and share the code with a friend to start playing.',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[600],
+            ),
+          ),
+          SizedBox(height: 20),
+
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _isLoading ? null : _createGame,
+              icon: _isLoading
+                  ? SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : Icon(Icons.add_circle_outline, size: 24),
+              label: Text(
+                _isLoading ? 'Creating Game...' : 'Create Game',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 4,
+              ),
+            ),
+          ),
+
+          // Game Code Display (if game was created)
+          if (_gameId != null && _gameCodeController.text.isNotEmpty) ...[
+            SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.green.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.green),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.check_circle, color: Colors.green),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Game Code: ${_gameCodeController.text}',
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Share this code with others to join your game!',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.green[700],
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        'Full URL: $baseUrl/${_gameCodeController.text}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.green[600],
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.copy, color: Colors.green),
+                        onPressed: () {
+                          // Copy to clipboard
+                          final url = '$baseUrl/${_gameCodeController.text}';
+                          html.window.navigator.clipboard?.writeText(url);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content:
+                                  const Text('Game URL copied to clipboard!'),
+                              behavior: SnackBarBehavior.floating,
+                              backgroundColor: Colors.green,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: _borderRadius),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          SizedBox(height: 16),
+
+          // Back button
+          SizedBox(
+            width: double.infinity,
+            child: TextButton.icon(
+              onPressed: _resetToMainMenu,
+              icon: Icon(Icons.arrow_back, size: 20),
+              label: Text('Back to Menu'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.grey[600],
+                padding: EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildJoinGameSection() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.login, color: Colors.blue),
+              SizedBox(width: 12),
+              Text(
+                'Join Existing Game',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[800],
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Enter the 5-character game code to join an existing game.',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[600],
+            ),
+          ),
+          SizedBox(height: 20),
+
+          TextField(
+            controller: _gameCodeController,
+            decoration: InputDecoration(
+              labelText: 'Game Code',
+              hintText: 'Enter 5-character code (e.g., ABC12)',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              filled: true,
+              fillColor: Colors.grey[50],
+              prefixIcon: Icon(Icons.qr_code, color: Colors.blue),
+              counterText: '${_gameCodeController.text.length}/5',
+            ),
+            maxLength: 5,
+            textCapitalization: TextCapitalization.characters,
+            textInputAction: TextInputAction.done,
+          ),
+
+          SizedBox(height: 20),
+
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: (_gameCodeController.text.length == 5 &&
+                      _playerNameController.text.trim().isNotEmpty &&
+                      !_isLoading)
+                  ? _joinGameByCode
+                  : null,
+              icon: _isLoading
+                  ? SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : Icon(Icons.login, size: 24),
+              label: Text(
+                _isLoading ? 'Joining Game...' : 'Join Game',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 4,
+              ),
+            ),
+          ),
+
+          SizedBox(height: 16),
+
+          // Back button
+          SizedBox(
+            width: double.infinity,
+            child: TextButton.icon(
+              onPressed: _resetToMainMenu,
+              icon: Icon(Icons.arrow_back, size: 20),
+              label: Text('Back to Menu'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.grey[600],
+                padding: EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRejoinGameSection() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.replay, color: Colors.orange),
+              SizedBox(width: 12),
+              Text(
+                'Rejoin Game',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[800],
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Reconnect to a game you were playing if you got disconnected.',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[600],
+            ),
+          ),
+          SizedBox(height: 20),
+
+          TextField(
+            controller: _gameCodeController,
+            decoration: InputDecoration(
+              labelText: 'Game Code',
+              hintText: 'Enter the game code you were playing',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              filled: true,
+              fillColor: Colors.grey[50],
+              prefixIcon: Icon(Icons.replay, color: Colors.orange),
+              counterText: '${_gameCodeController.text.length}/5',
+            ),
+            maxLength: 5,
+            textCapitalization: TextCapitalization.characters,
+            textInputAction: TextInputAction.done,
+          ),
+
+          SizedBox(height: 20),
+
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: (_gameCodeController.text.length == 5 &&
+                      _playerNameController.text.trim().isNotEmpty &&
+                      !_isLoading)
+                  ? _rejoinGame
+                  : null,
+              icon: _isLoading
+                  ? SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : Icon(Icons.replay, size: 24),
+              label: Text(
+                _isLoading ? 'Rejoining...' : 'Rejoin Game',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 4,
+              ),
+            ),
+          ),
+
+          SizedBox(height: 16),
+
+          // Back button
+          SizedBox(
+            width: double.infinity,
+            child: TextButton.icon(
+              onPressed: _resetToMainMenu,
+              icon: Icon(Icons.arrow_back, size: 20),
+              label: Text('Back to Menu'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.grey[600],
+                padding: EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAvailableGamesSection() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.list, color: Colors.blue),
+              SizedBox(width: 12),
+              Text(
+                'Available Games',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey[800],
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Games waiting for players. Click the copy icon to use a game code.',
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey[600],
+            ),
+          ),
+          SizedBox(height: 16),
+          SizedBox(
+            height: 150,
+            child: ListView.builder(
+              itemCount: _availableGames.length,
+              itemBuilder: (context, index) {
+                final game = _availableGames[index];
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: ListTile(
+                    title: Text(
+                      'Game Code: ${game['game_code'] ?? 'N/A'}',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Status: ${game['status']} (${game['active_players'] ?? game['player_count']}/2 players)',
+                        ),
+                        if (game['game_id'] != null)
+                          Text(
+                            'Game ID: ${game['game_id']}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                      ],
+                    ),
+                    trailing: (game['status'] == 'waiting' ||
+                            game['status'] == 'waiting_for_replacement')
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon:
+                                    const Icon(Icons.copy, color: Colors.blue),
+                                onPressed: () {
+                                  _gameCodeController.text =
+                                      game['game_code'] ?? '';
+                                  _selectAction('join');
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                          'Game code ${game['game_code']} copied to join form'),
+                                      behavior: SnackBarBehavior.floating,
+                                      backgroundColor: Colors.blue,
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius: _borderRadius),
+                                    ),
+                                  );
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.play_arrow,
+                                    color: Colors.green),
+                                onPressed: () {
+                                  _gameCodeController.text =
+                                      game['game_code'] ?? '';
+                                  _selectAction('join');
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                          'Ready to join game ${game['game_code']}'),
+                                      behavior: SnackBarBehavior.floating,
+                                      backgroundColor: Colors.green,
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius: _borderRadius),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
+                          )
+                        : null,
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
