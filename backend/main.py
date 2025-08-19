@@ -301,6 +301,8 @@ games_by_code: Dict[str, str] = {}  # Maps game codes to game IDs
 active_connections: Dict[str, WebSocket] = {}
 # Track original player ownership to prevent slot stealing
 player_identities: Dict[str, Dict[str, str]] = {}  # game_id -> {player_id -> original_slot_owner}
+# Track disconnected players for proper restoration
+disconnected_players: Dict[str, Dict[str, Player]] = {}  # game_id -> {player_id -> Player}
 
 @app.get("/")
 async def root():
@@ -417,11 +419,10 @@ async def join_game(game_id: str, request: JoinGameRequest):
         slot_index = available_slots[0]
         old_player_id = game.players[slot_index].id
         
-        # Check if this slot is reserved for the original player
-        original_owner = player_identities[game_id].get(old_player_id)
-        if original_owner and original_owner != old_player_id:
-            # This slot belongs to someone else, can't take it
-            raise HTTPException(status_code=400, detail="This slot is reserved for the original player")
+        # Check if this is a disconnected player that can be restored
+        if game_id in disconnected_players and old_player_id in disconnected_players[game_id]:
+            # This is a disconnected player, we should restore them instead of replacing
+            raise HTTPException(status_code=400, detail="This slot belongs to a disconnected player. Please use the reconnect feature instead.")
         
         # Create new player with the same slot
         player_id = f"player_{slot_index + 1}"
@@ -501,11 +502,10 @@ async def join_game_by_code(request: JoinGameByCodeRequest):
         slot_index = available_slots[0]
         old_player_id = game.players[slot_index].id
         
-        # Check if this slot is reserved for the original player
-        original_owner = player_identities[game_id].get(old_player_id)
-        if original_owner and original_owner != old_player_id:
-            # This slot belongs to someone else, can't take it
-            raise HTTPException(status_code=400, detail="This slot is reserved for the original player")
+        # Check if this is a disconnected player that can be restored
+        if game_id in disconnected_players and old_player_id in disconnected_players[game_id]:
+            # This is a disconnected player, we should restore them instead of replacing
+            raise HTTPException(status_code=400, detail="This slot belongs to a disconnected player. Please use the reconnect feature instead.")
         
         # Create new player with the same slot
         player_id = f"player_{slot_index + 1}"
@@ -615,50 +615,45 @@ async def reclaim_slot(game_id: str, request: ReclaimSlotRequest):
     
     game = games[game_id]
     
-    if game_id not in player_identities:
-        raise HTTPException(status_code=400, detail="No player identity tracking for this game")
+    # Check if we have the disconnected player stored
+    if game_id not in disconnected_players or request.original_player_id not in disconnected_players[game_id]:
+        raise HTTPException(status_code=400, detail="No disconnected player found to restore")
     
     # Find the slot that belongs to the original player
     target_slot = None
     for i, player in enumerate(game.players):
-        if player.id in player_identities[game_id]:
-            if player_identities[game_id][player.id] == request.original_player_id:
-                target_slot = i
-                break
+        if player.id == request.original_player_id:
+            target_slot = i
+            break
     
     if target_slot is None:
         raise HTTPException(status_code=404, detail="No slot found for this player")
     
-    # Check if the slot is currently occupied by someone else
+    # Check if the slot is currently occupied by an active player
     current_occupant = game.players[target_slot]
     if current_occupant.id in active_connections:
         raise HTTPException(status_code=400, detail="Slot is currently occupied by an active player")
     
-    # Create new player with the original slot and cards
-    player_id = f"player_{target_slot + 1}"
-    player = Player(id=player_id, name=request.player_name, cards=[])
+    # Restore the original player with their original cards and state
+    original_player = disconnected_players[game_id][request.original_player_id]
     
-    # If game was started, give the player their original cards
-    if game.game_started:
-        player.cards = current_occupant.cards.copy()
-        # Reset turn if it was the original player's turn
-        if target_slot == game.current_player_index:
-            player.is_current_turn = True
+    # Update the player's name if it changed
+    original_player.name = request.player_name
     
-    # Update player identities
-    player_identities[game_id][player_id] = request.original_player_id
+    # Restore the original player to their slot
+    game.players[target_slot] = original_player
     
-    # Replace the current occupant
-    game.players[target_slot] = player
+    # Remove from disconnected players
+    del disconnected_players[game_id][request.original_player_id]
     
     # Broadcast the reclamation
     await _broadcast_game_state(game_id, {
         "type": "player_reclaimed_slot",
-        "message": f"{request.player_name} reclaimed their original slot",
-        "reclaimed_player": player.model_dump()
+        "message": f"{request.player_name} reconnected to the game",
+        "reclaimed_player": original_player.model_dump()
     })
     
-    return {"player_id": player_id, "message": f"Successfully reclaimed slot for {request.player_name}"}
+    return {"player_id": original_player.id, "message": f"Successfully restored {request.player_name} to their original slot"}
 
 @app.get("/api/games/{game_id}/can-reclaim/{original_player_id}")
 async def can_reclaim_slot(game_id: str, original_player_id: str):
@@ -666,26 +661,24 @@ async def can_reclaim_slot(game_id: str, original_player_id: str):
     if game_id not in games:
         raise HTTPException(status_code=404, detail="Game not found")
     
-    if game_id not in player_identities:
-        return {"can_reclaim": False, "reason": "No player identity tracking for this game"}
+    # Check if we have the disconnected player stored
+    if game_id not in disconnected_players or original_player_id not in disconnected_players[game_id]:
+        return {"can_reclaim": False, "reason": "No disconnected player found to restore"}
     
-    # Check if there are any available slots for this original player
-    available_slots = _get_available_slots_for_original_player(game_id, original_player_id)
+    # Check if the player's original slot is available
+    for i, player in enumerate(games[game_id].players):
+        if player.id == original_player_id:
+            # Found the player's slot, check if it's available
+            if player.id not in active_connections:
+                return {
+                    "can_reclaim": True, 
+                    "slot_index": i,
+                    "reason": "Original slot is available for restoration"
+                }
+            else:
+                return {"can_reclaim": False, "reason": "Original slot is currently occupied by an active player"}
     
-    if not available_slots:
-        return {"can_reclaim": False, "reason": "No available slots for this player"}
-    
-    # Check if the slot is currently occupied by an active player
-    for slot_index in available_slots:
-        player = games[game_id].players[slot_index]
-        if player.id not in active_connections:
-            return {
-                "can_reclaim": True, 
-                "slot_index": slot_index,
-                "reason": "Slot is available for reclamation"
-            }
-    
-    return {"can_reclaim": False, "reason": "All slots are currently occupied by active players"}
+    return {"can_reclaim": False, "reason": "Original slot not found"}
 
 # WebSocket endpoint for lobby updates (game list)
 @app.websocket("/ws/lobby/{player_id}")
@@ -828,16 +821,25 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str, player_id: str)
         # Check if this was a game player and update game status
         if game_id in games:
             game = games[game_id]
-            # Broadcast updated game list to show available slots
-            await _broadcast_game_list_update()
             
-            # If game was started and player disconnected, notify other players
-            if game.game_started:
-                await _broadcast_game_state(game_id, {
-                    "type": "player_disconnected",
-                    "message": f"Player {player_id} disconnected from the game",
-                    "disconnected_player_id": player_id
-                })
+            # Find the disconnected player and store their information
+            player = next((p for p in game.players if p.id == player_id), None)
+            if player:
+                # Store the disconnected player for potential restoration
+                if game_id not in disconnected_players:
+                    disconnected_players[game_id] = {}
+                disconnected_players[game_id][player_id] = player
+                
+                # Broadcast updated game list to show available slots
+                await _broadcast_game_list_update()
+                
+                # If game was started and player disconnected, notify other players
+                if game.game_started:
+                    await _broadcast_game_state(game_id, {
+                        "type": "player_disconnected",
+                        "message": f"{player.name} disconnected from the game",
+                        "disconnected_player_id": player_id
+                    })
 
 async def _broadcast_game_state(game_id: str, additional_data: dict = None):
     """Broadcast game state to all players in a game"""
@@ -958,24 +960,12 @@ async def _broadcast_game_list_update():
             if player_id in active_connections:
                 del active_connections[player_id]
 
-def _cleanup_player_identities(game_id: str):
-    """Clean up player identities when a game is removed"""
+def _cleanup_game_data(game_id: str):
+    """Clean up game data when a game is removed"""
     if game_id in player_identities:
         del player_identities[game_id]
-
-def _get_available_slots_for_original_player(game_id: str, original_player_id: str) -> List[int]:
-    """Get available slots that belong to a specific original player"""
-    if game_id not in player_identities:
-        return []
-    
-    available_slots = []
-    for i, player in enumerate(games[game_id].players):
-        if player.id not in active_connections:
-            # Check if this slot belongs to the original player
-            if player_identities[game_id].get(player.id) == original_player_id:
-                available_slots.append(i)
-    
-    return available_slots
+    if game_id in disconnected_players:
+        del disconnected_players[game_id]
 
 if __name__ == "__main__":
     import uvicorn
