@@ -33,6 +33,9 @@ class WebSocketManager {
   bool get isConnected => _channel != null && _channel!.sink != null;
   bool get isConnecting => _isConnecting;
 
+  // Check if the connection is ready to send/receive messages
+  bool get isReady => isConnected && !_isConnecting;
+
   void connect(String url, {String? gameId, String? playerId}) {
     _url = url;
     _gameId = gameId;
@@ -46,6 +49,7 @@ class WebSocketManager {
     if (_isConnecting || !_shouldReconnect) return;
 
     _isConnecting = true;
+    print('Attempting to connect to WebSocket: $_url');
 
     try {
       _channel = WebSocketChannel.connect(Uri.parse(_url!));
@@ -54,6 +58,7 @@ class WebSocketManager {
         (data) {
           try {
             final message = json.decode(data);
+            print('WebSocket received raw data: $data'); // Debug log
             onMessage?.call(message);
           } catch (e) {
             print('Error parsing WebSocket message: $e');
@@ -61,6 +66,7 @@ class WebSocketManager {
         },
         onError: (error) {
           print('WebSocket error: $error');
+          print('WebSocket error type: ${error.runtimeType}'); // Debug log
           onError?.call(error.toString());
           _handleDisconnection();
         },
@@ -73,6 +79,7 @@ class WebSocketManager {
 
       _isConnecting = false;
       _reconnectAttempts = 0;
+      print('WebSocket connection established successfully'); // Debug log
       onConnected?.call();
 
       // Start ping timer
@@ -1602,6 +1609,7 @@ class _GameScreenState extends State<GameScreen>
   late AnimationController _cardAnimationController;
   late Animation<double> _cardAnimation;
   bool _isConnected = false;
+  bool _isConnecting = true; // Start as connecting, not disconnected
   bool _isReconnecting = false;
   bool _canReclaimSlot = false;
 
@@ -1669,8 +1677,12 @@ class _GameScreenState extends State<GameScreen>
   void _checkAndReconnectIfNeeded() {
     if (_gameWebSocket != null &&
         !_gameWebSocket!.isConnected &&
-        !_isReconnecting) {
+        !_isReconnecting &&
+        !_isConnecting) {
       print('WebSocket not connected, attempting to reconnect...');
+      setState(() {
+        _isConnecting = true;
+      });
       _checkSlotReclamation();
     }
   }
@@ -1692,6 +1704,9 @@ class _GameScreenState extends State<GameScreen>
   Future<void> _checkSlotReclamation() async {
     try {
       print('Checking if we can reclaim our slot...');
+      setState(() {
+        _isConnecting = true;
+      });
 
       // Check if we can reclaim our slot
       final response = await http.get(
@@ -1711,6 +1726,7 @@ class _GameScreenState extends State<GameScreen>
           print('Cannot reclaim slot: ${data['reason']}');
           setState(() {
             _canReclaimSlot = false;
+            _isConnecting = false;
           });
           // Fall back to manual reconnection
           _manualReconnect();
@@ -1719,12 +1735,16 @@ class _GameScreenState extends State<GameScreen>
         print('Failed to check slot reclamation: ${response.statusCode}');
         setState(() {
           _canReclaimSlot = false;
+          _isConnecting = false;
         });
         // Fall back to manual reconnection
         _manualReconnect();
       }
     } catch (e) {
       print('Error checking slot reclamation: $e');
+      setState(() {
+        _isConnecting = false;
+      });
       // Fall back to manual reconnection
       _manualReconnect();
     }
@@ -1733,6 +1753,9 @@ class _GameScreenState extends State<GameScreen>
   Future<void> _reclaimSlot() async {
     try {
       print('Reclaiming our slot...');
+      setState(() {
+        _isConnecting = true;
+      });
 
       final response = await http.post(
         Uri.parse('$apiBaseUrl/api/games/${widget.gameId}/reclaim-slot'),
@@ -1762,16 +1785,23 @@ class _GameScreenState extends State<GameScreen>
 
         // The WebSocket should automatically reconnect and update the game state
         setState(() {
+          _isConnecting = false;
           _isReconnecting = false;
         });
       } else {
         print(
             'Failed to reclaim slot: ${response.statusCode} - ${response.body}');
+        setState(() {
+          _isConnecting = false;
+        });
         // Fall back to manual reconnection
         _manualReconnect();
       }
     } catch (e) {
       print('Error reclaiming slot: $e');
+      setState(() {
+        _isConnecting = false;
+      });
       // Fall back to manual reconnection
       _manualReconnect();
     }
@@ -1789,6 +1819,9 @@ class _GameScreenState extends State<GameScreen>
 
   void _connectWebSocket() {
     final wsUrl = '$wsBaseUrl/ws/${widget.gameId}/${widget.playerId}';
+    print('Connecting to WebSocket: $wsUrl');
+    print(
+        'GameScreen: Starting WebSocket connection for game ${widget.gameId}, player ${widget.playerId}'); // Debug log
     _gameWebSocket = WebSocketManager();
     _gameWebSocket!.connect(wsUrl);
 
@@ -1896,8 +1929,11 @@ class _GameScreenState extends State<GameScreen>
 
     _gameWebSocket!.onError = (error) {
       print('WebSocket error: $error'); // Debug log
+      print(
+          'WebSocket error details: ${error.toString()}'); // Additional debug info
       setState(() {
         _isConnected = false;
+        _isConnecting = false;
         _isReconnecting = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1912,10 +1948,25 @@ class _GameScreenState extends State<GameScreen>
 
     _gameWebSocket!.onConnected = () {
       print('WebSocket connected');
+      print(
+          'GameScreen: WebSocket connection established for game ${widget.gameId}'); // Debug log
       setState(() {
         _isConnected = true;
+        _isConnecting = false;
         _isReconnecting = false;
       });
+
+      // Send a ping to confirm the connection is working
+      _gameWebSocket!.send({'type': 'ping'});
+
+      // Also send a join message to ensure the server knows we're here
+      _gameWebSocket!.send({
+        'type': 'join_game',
+        'game_id': widget.gameId,
+        'player_id': widget.playerId,
+        'player_name': widget.playerName,
+      });
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Connected to game server'),
@@ -1928,14 +1979,16 @@ class _GameScreenState extends State<GameScreen>
 
     _gameWebSocket!.onDisconnected = () {
       print('WebSocket connection closed');
+      print(
+          'GameScreen: WebSocket connection lost for game ${widget.gameId}'); // Debug log
       setState(() {
         _isConnected = false;
+        _isConnecting = false;
         _isReconnecting = true;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Connection lost. Attempting to reconnect...'),
-          behavior: SnackBarBehavior.floating,
           backgroundColor: Colors.orange,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
@@ -1954,6 +2007,34 @@ class _GameScreenState extends State<GameScreen>
       if (_gameState == null) {
         print('WebSocket fallback: fetching game state via HTTP');
         _fetchGameStateFallback();
+      }
+    });
+
+    // Connection timeout: if we're still connecting after 10 seconds, show an error
+    Timer(const Duration(seconds: 10), () {
+      if (_isConnecting && !_isConnected) {
+        print('Connection timeout - still connecting after 10 seconds');
+        setState(() {
+          _isConnecting = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+                'Connection timeout. Please check your internet connection.'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.red,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        );
+      }
+    });
+
+    // Also add a shorter timeout for the initial connection attempt
+    Timer(const Duration(seconds: 5), () {
+      if (_isConnecting && !_isConnected) {
+        print('Initial connection attempt taking longer than expected...');
+        // Don't show an error yet, just log it
       }
     });
   }
@@ -2432,7 +2513,7 @@ class _GameScreenState extends State<GameScreen>
                 ],
               ),
             )
-          : _buildActionIcon(cardType, cardColor, size: iconSize),
+          : _buildActionCornerIcon(cardType, cardColor, size: iconSize),
     );
   }
 
@@ -2575,6 +2656,93 @@ class _GameScreenState extends State<GameScreen>
         ),
       ],
     );
+  }
+
+  Widget _buildActionCornerIcon(String cardType, String cardColor,
+      {required double size}) {
+    // For corner icons, we want smaller, more appropriate symbols
+    final cornerSize = size * 0.8; // Slightly smaller for corners
+
+    switch (cardType) {
+      case 'skip':
+        return Icon(
+          Icons.skip_next,
+          color: _getTextColor(cardColor),
+          size: cornerSize,
+          shadows: [
+            Shadow(
+              color: Colors.black.withOpacity(0.5),
+              offset: const Offset(1, 1),
+              blurRadius: 2,
+            ),
+          ],
+        );
+      case 'reverse':
+        return Icon(
+          Icons.swap_horiz,
+          color: _getTextColor(cardColor),
+          size: cornerSize,
+          shadows: [
+            Shadow(
+              color: Colors.black.withOpacity(0.5),
+              offset: const Offset(1, 1),
+              blurRadius: 2,
+            ),
+          ],
+        );
+      case 'draw2':
+        return Icon(
+          Icons.add,
+          color: _getTextColor(cardColor),
+          size: cornerSize,
+          shadows: [
+            Shadow(
+              color: Colors.black.withOpacity(0.5),
+              offset: const Offset(1, 1),
+              blurRadius: 2,
+            ),
+          ],
+        );
+      case 'wild':
+        return Icon(
+          Icons.color_lens,
+          color: _getTextColor(cardColor),
+          size: cornerSize,
+          shadows: [
+            Shadow(
+              color: Colors.black.withOpacity(0.5),
+              offset: const Offset(1, 1),
+              blurRadius: 2,
+            ),
+          ],
+        );
+      case 'wild_draw4':
+        return Icon(
+          Icons.add_circle,
+          color: _getTextColor(cardColor),
+          size: cornerSize,
+          shadows: [
+            Shadow(
+              color: Colors.black.withOpacity(0.5),
+              offset: const Offset(1, 1),
+              blurRadius: 2,
+            ),
+          ],
+        );
+      default:
+        return Icon(
+          Icons.help_outline,
+          color: _getTextColor(cardColor),
+          size: cornerSize,
+          shadows: [
+            Shadow(
+              color: Colors.black.withOpacity(0.5),
+              offset: const Offset(1, 1),
+              blurRadius: 2,
+            ),
+          ],
+        );
+    }
   }
 
   Widget _buildColorDot(String color, {required double size}) {
@@ -2786,11 +2954,15 @@ class _GameScreenState extends State<GameScreen>
                     width: 8,
                     height: 8,
                     decoration: BoxDecoration(
-                      color: _isConnected ? Colors.green : Colors.red,
+                      color: _isConnected
+                          ? Colors.green
+                          : _isConnecting
+                              ? Colors.blue
+                              : Colors.red,
                       shape: BoxShape.circle,
                     ),
                   ),
-                  if (_isReconnecting) ...[
+                  if (_isConnecting || _isReconnecting) ...[
                     SizedBox(width: 4),
                     SizedBox(
                       width: 12,
@@ -2835,24 +3007,32 @@ class _GameScreenState extends State<GameScreen>
                             width: double.infinity,
                             padding: EdgeInsets.symmetric(
                                 horizontal: spacing, vertical: spacing / 2),
-                            color: _isReconnecting ? Colors.orange : Colors.red,
+                            color: _isConnecting
+                                ? Colors.blue
+                                : _isReconnecting
+                                    ? Colors.orange
+                                    : Colors.red,
                             child: Row(
                               children: [
                                 Icon(
-                                  _isReconnecting
-                                      ? Icons.wifi_find
-                                      : Icons.wifi_off,
+                                  _isConnecting
+                                      ? Icons.wifi
+                                      : _isReconnecting
+                                          ? Icons.wifi_find
+                                          : Icons.wifi_off,
                                   color: Colors.white,
                                   size: 20,
                                 ),
                                 SizedBox(width: spacing / 2),
                                 Expanded(
                                   child: Text(
-                                    _isReconnecting
-                                        ? 'Reconnecting to game server...'
-                                        : _canReclaimSlot
-                                            ? 'Your slot is available to reclaim!'
-                                            : 'Disconnected from game server',
+                                    _isConnecting
+                                        ? 'Connecting to game server...'
+                                        : _isReconnecting
+                                            ? 'Reconnecting to game server...'
+                                            : _canReclaimSlot
+                                                ? 'Your slot is available to reclaim!'
+                                                : 'Disconnected from game server',
                                     style: const TextStyle(
                                       color: Colors.white,
                                       fontWeight: FontWeight.w500,
@@ -2872,15 +3052,16 @@ class _GameScreenState extends State<GameScreen>
                                     ),
                                   if (_canReclaimSlot)
                                     SizedBox(width: spacing / 2),
-                                  TextButton(
-                                    onPressed: _manualReconnect,
-                                    style: TextButton.styleFrom(
-                                      foregroundColor: Colors.white,
-                                      padding: EdgeInsets.symmetric(
-                                          horizontal: spacing / 2),
+                                  if (!_isConnecting && !_isConnected)
+                                    TextButton(
+                                      onPressed: _manualReconnect,
+                                      style: TextButton.styleFrom(
+                                        foregroundColor: Colors.white,
+                                        padding: EdgeInsets.symmetric(
+                                            horizontal: spacing / 2),
+                                      ),
+                                      child: const Text('RECONNECT'),
                                     ),
-                                    child: const Text('RECONNECT'),
-                                  ),
                                 ],
                               ],
                             ),
@@ -3595,6 +3776,7 @@ class _GameScreenState extends State<GameScreen>
   void _manualReconnect() {
     if (_gameWebSocket != null) {
       setState(() {
+        _isConnecting = true;
         _isReconnecting = true;
       });
       _gameWebSocket!.reconnect();
@@ -3603,6 +3785,7 @@ class _GameScreenState extends State<GameScreen>
 
   void _manualSlotReclamation() {
     setState(() {
+      _isConnecting = true;
       _isReconnecting = true;
     });
     _checkSlotReclamation();
@@ -3623,20 +3806,46 @@ class _GameScreenState extends State<GameScreen>
                     width: 12,
                     height: 12,
                     decoration: BoxDecoration(
-                      color: _isConnected ? Colors.green : Colors.red,
+                      color: _isConnected
+                          ? Colors.green
+                          : _isConnecting
+                              ? Colors.blue
+                              : Colors.red,
                       shape: BoxShape.circle,
                     ),
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    _isConnected ? 'Connected' : 'Disconnected',
+                    _isConnected
+                        ? 'Connected'
+                        : _isConnecting
+                            ? 'Connecting'
+                            : 'Disconnected',
                     style: TextStyle(
-                      color: _isConnected ? Colors.green : Colors.red,
+                      color: _isConnected
+                          ? Colors.green
+                          : _isConnecting
+                              ? Colors.blue
+                              : Colors.red,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                 ],
               ),
+              if (_isConnecting) ...[
+                const SizedBox(height: 16),
+                const Row(
+                  children: [
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 8),
+                    Text('Connecting...'),
+                  ],
+                ),
+              ],
               if (_isReconnecting) ...[
                 const SizedBox(height: 16),
                 const Row(
@@ -3651,7 +3860,7 @@ class _GameScreenState extends State<GameScreen>
                   ],
                 ),
               ],
-              if (!_isConnected && !_isReconnecting) ...[
+              if (!_isConnected && !_isReconnecting && !_isConnecting) ...[
                 const SizedBox(height: 16),
                 const Text(
                   'Your connection to the game server was lost. This can happen when:',
@@ -3672,7 +3881,7 @@ class _GameScreenState extends State<GameScreen>
               onPressed: () => Navigator.of(context).pop(),
               child: const Text('Close'),
             ),
-            if (!_isConnected && !_isReconnecting)
+            if (!_isConnected && !_isReconnecting && !_isConnecting)
               ElevatedButton(
                 onPressed: () {
                   Navigator.of(context).pop();
