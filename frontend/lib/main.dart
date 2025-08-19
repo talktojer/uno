@@ -1163,6 +1163,7 @@ class _GameScreenState extends State<GameScreen>
   late Animation<double> _cardAnimation;
   bool _isConnected = false;
   bool _isReconnecting = false;
+  bool _canReclaimSlot = false;
 
   // Helper method for consistent border radius
   static BorderRadius get _borderRadius => BorderRadius.circular(8);
@@ -1223,6 +1224,94 @@ class _GameScreenState extends State<GameScreen>
         !_gameWebSocket!.isConnected &&
         !_isReconnecting) {
       print('WebSocket not connected, attempting to reconnect...');
+      _checkSlotReclamation();
+    }
+  }
+
+  Future<void> _checkSlotReclamation() async {
+    try {
+      print('Checking if we can reclaim our slot...');
+
+      // Check if we can reclaim our slot
+      final response = await http.get(
+        Uri.parse(
+            '$apiBaseUrl/api/games/${widget.gameId}/can-reclaim/${widget.playerId}'),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['can_reclaim'] == true) {
+          print('Slot reclamation possible, attempting to reclaim...');
+          setState(() {
+            _canReclaimSlot = true;
+          });
+          await _reclaimSlot();
+        } else {
+          print('Cannot reclaim slot: ${data['reason']}');
+          setState(() {
+            _canReclaimSlot = false;
+          });
+          // Fall back to manual reconnection
+          _manualReconnect();
+        }
+      } else {
+        print('Failed to check slot reclamation: ${response.statusCode}');
+        setState(() {
+          _canReclaimSlot = false;
+        });
+        // Fall back to manual reconnection
+        _manualReconnect();
+      }
+    } catch (e) {
+      print('Error checking slot reclamation: $e');
+      // Fall back to manual reconnection
+      _manualReconnect();
+    }
+  }
+
+  Future<void> _reclaimSlot() async {
+    try {
+      print('Reclaiming our slot...');
+
+      final response = await http.post(
+        Uri.parse('$apiBaseUrl/api/games/${widget.gameId}/reclaim-slot'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'original_player_id': widget.playerId,
+          'player_name': widget.playerName,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        print('Successfully reclaimed slot: ${data['message']}');
+
+        // Update our player ID to the new one
+        // Note: In a real implementation, you might want to update the widget's playerId
+        // For now, we'll just show a success message and let the WebSocket handle updates
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Successfully reclaimed your slot!'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.green,
+            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+          ),
+        );
+
+        // The WebSocket should automatically reconnect and update the game state
+        setState(() {
+          _isReconnecting = false;
+        });
+      } else {
+        print(
+            'Failed to reclaim slot: ${response.statusCode} - ${response.body}');
+        // Fall back to manual reconnection
+        _manualReconnect();
+      }
+    } catch (e) {
+      print('Error reclaiming slot: $e');
+      // Fall back to manual reconnection
       _manualReconnect();
     }
   }
@@ -1281,6 +1370,19 @@ class _GameScreenState extends State<GameScreen>
           ),
         );
         print('Player disconnected: ${messageData['message']}'); // Debug log
+
+        // Check if we can reclaim our slot when opponent disconnects
+        _checkSlotReclamation();
+      } else if (messageData['type'] == 'player_reclaimed_slot') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${messageData['message']}'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.green,
+            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+          ),
+        );
+        print('Player reclaimed slot: ${messageData['message']}'); // Debug log
       } else if (messageData['type'] == 'card_drawn') {
         // Update game state with the new card drawn information
         setState(() {
@@ -2042,14 +2144,27 @@ class _GameScreenState extends State<GameScreen>
                         child: Text(
                           _isReconnecting
                               ? 'Reconnecting to game server...'
-                              : 'Disconnected from game server',
+                              : _canReclaimSlot
+                                  ? 'Your slot is available to reclaim!'
+                                  : 'Disconnected from game server',
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.w500,
                           ),
                         ),
                       ),
-                      if (!_isReconnecting)
+                      if (!_isReconnecting) ...[
+                        if (_canReclaimSlot)
+                          TextButton(
+                            onPressed: _manualSlotReclamation,
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8),
+                            ),
+                            child: const Text('RECLAIM SLOT'),
+                          ),
+                        if (_canReclaimSlot) const SizedBox(width: 8),
                         TextButton(
                           onPressed: _manualReconnect,
                           style: TextButton.styleFrom(
@@ -2058,6 +2173,7 @@ class _GameScreenState extends State<GameScreen>
                           ),
                           child: const Text('RECONNECT'),
                         ),
+                      ],
                     ],
                   ),
                 ),
@@ -2317,6 +2433,13 @@ class _GameScreenState extends State<GameScreen>
       });
       _gameWebSocket!.reconnect();
     }
+  }
+
+  void _manualSlotReclamation() {
+    setState(() {
+      _isReconnecting = true;
+    });
+    _checkSlotReclamation();
   }
 
   void _showConnectionDialog() {
