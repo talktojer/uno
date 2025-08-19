@@ -703,6 +703,117 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _rejoinGame() async {
+    if (_playerNameController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Please enter your name'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red,
+          shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+        ),
+      );
+      return;
+    }
+
+    if (_gameCodeController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Please enter a game code'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red,
+          shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // First check if we can rejoin
+      final checkResponse = await http.get(
+        Uri.parse(
+            '$apiBaseUrl/api/games/code/${_gameCodeController.text.trim()}/can-rejoin/${_playerNameController.text.trim()}'),
+      );
+
+      if (checkResponse.statusCode == 200) {
+        final checkData = json.decode(checkResponse.body);
+        if (checkData['can_rejoin']) {
+          // Try to rejoin the game
+          final rejoinResponse = await http.post(
+            Uri.parse('$apiBaseUrl/api/games/${checkData['game_id']}/rejoin'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({
+              'player_name': _playerNameController.text.trim(),
+            }),
+          );
+
+          if (rejoinResponse.statusCode == 200) {
+            final data = json.decode(rejoinResponse.body);
+            final playerId = data['player_id'];
+            final gameId = checkData['game_id'];
+            final playerName = _playerNameController.text.trim();
+
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => GameScreen(
+                  gameId: gameId,
+                  playerId: playerId,
+                  playerName: playerName,
+                ),
+              ),
+            );
+          } else {
+            final errorData = json.decode(rejoinResponse.body);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(errorData['detail'] ?? 'Failed to rejoin game'),
+                behavior: SnackBarBehavior.floating,
+                backgroundColor: Colors.red,
+                shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+              ),
+            );
+          }
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(checkData['message'] ?? 'Cannot rejoin game'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.orange,
+              shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+            ),
+          );
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Game code not found'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.red,
+            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: $e'),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.red,
+          shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+        ),
+      );
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
@@ -723,8 +834,16 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         child: SafeArea(
+          bottom: false, // Don't add bottom safe area padding
           child: SingleChildScrollView(
-            padding: EdgeInsets.all(isSmallScreen ? 16.0 : 24.0),
+            padding: EdgeInsets.only(
+              left: isSmallScreen ? 16.0 : 24.0,
+              right: isSmallScreen ? 16.0 : 24.0,
+              top: isSmallScreen ? 16.0 : 24.0,
+              bottom: isSmallScreen
+                  ? 32.0
+                  : 48.0, // Extra bottom padding for mobile
+            ),
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 500),
@@ -803,6 +922,61 @@ class _HomeScreenState extends State<HomeScreen> {
                           textInputAction: TextInputAction.done,
                           maxLength: 5,
                           textCapitalization: TextCapitalization.characters,
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        // Rejoin Game Section
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.orange),
+                          ),
+                          child: Column(
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(Icons.replay,
+                                      color: Colors.orange),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Rejoin Game',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.orange[700],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Reconnect to a game you were playing',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.orange[600],
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  onPressed: _isLoading ? null : _rejoinGame,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.orange,
+                                    foregroundColor: Colors.white,
+                                  ),
+                                  child: Text(_isLoading
+                                      ? 'Rejoining...'
+                                      : 'Rejoin Game'),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
 
                         const SizedBox(height: 20),
@@ -2217,9 +2391,15 @@ class _GameScreenState extends State<GameScreen>
             ),
           ),
           child: SafeArea(
+            bottom: false, // Don't add bottom safe area padding
             child: Center(
               child: Padding(
-                padding: const EdgeInsets.all(24.0),
+                padding: const EdgeInsets.only(
+                  left: 24.0,
+                  right: 24.0,
+                  top: 24.0,
+                  bottom: 48.0, // Extra bottom padding for mobile
+                ),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -2347,6 +2527,7 @@ class _GameScreenState extends State<GameScreen>
           ),
         ),
         child: SafeArea(
+          bottom: false, // Don't add bottom safe area padding
           child: Column(
             children: [
               // Connection status banner
@@ -3035,6 +3216,9 @@ class _GameScreenState extends State<GameScreen>
                     ),
                   ),
                 ),
+
+              // Add bottom padding to prevent cutoff on mobile devices
+              SizedBox(height: MediaQuery.of(context).padding.bottom + 20),
             ],
           ),
         ),

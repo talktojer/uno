@@ -552,6 +552,90 @@ async def join_game_by_code(request: JoinGameByCodeRequest):
     
     return {"player_id": player_id, "game_id": game_id, "message": message}
 
+# Add new endpoint for checking if a player can rejoin
+@app.get("/api/games/{game_id}/can-rejoin/{player_name}")
+async def can_rejoin_game(game_id: str, player_name: str):
+    """Check if a player can rejoin a game by name"""
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    
+    game = games[game_id]
+    
+    # Check if there's a disconnected player with this name
+    if game_id in disconnected_players:
+        for player_id, player in disconnected_players[game_id].items():
+            if player.name == player_name:
+                # Check if their slot is available
+                for i, current_player in enumerate(game.players):
+                    if current_player.id == player_id and current_player.id not in active_connections:
+                        return {
+                            "can_rejoin": True,
+                            "player_id": player_id,
+                            "slot_index": i,
+                            "message": f"Found disconnected player '{player_name}' with available slot"
+                        }
+    
+    return {"can_rejoin": False, "message": "No disconnected player found with this name or slot not available"}
+
+# Add new endpoint for rejoining by name
+@app.post("/api/games/{game_id}/rejoin")
+async def rejoin_game(game_id: str, request: JoinGameRequest):
+    """Rejoin a game by player name (for disconnected players)"""
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    
+    game = games[game_id]
+    player_name = request.player_name
+    
+    # Check if there's a disconnected player with this name
+    if game_id not in disconnected_players:
+        raise HTTPException(status_code=400, detail="No disconnected players found in this game")
+    
+    # Find the disconnected player
+    disconnected_player_id = None
+    disconnected_player = None
+    for player_id, player in disconnected_players[game_id].items():
+        if player.name == player_name:
+            disconnected_player_id = player_id
+            disconnected_player = player
+            break
+    
+    if not disconnected_player:
+        raise HTTPException(status_code=400, detail=f"No disconnected player found with name '{player_name}'")
+    
+    # Check if their slot is available
+    slot_available = False
+    slot_index = None
+    for i, current_player in enumerate(game.players):
+        if current_player.id == disconnected_player_id and current_player.id not in active_connections:
+            slot_available = True
+            slot_index = i
+            break
+    
+    if not slot_available:
+        raise HTTPException(status_code=400, detail="Your slot is not available for rejoining")
+    
+    # Restore the player to their slot
+    game.players[slot_index] = disconnected_player
+    
+    # Remove from disconnected players
+    del disconnected_players[game_id][disconnected_player_id]
+    
+    # Broadcast the reconnection
+    await _broadcast_game_state(game_id, {
+        "type": "player_rejoined",
+        "message": f"{player_name} reconnected to the game",
+        "rejoined_player": disconnected_player.model_dump()
+    })
+    
+    # Broadcast updated game list
+    await _broadcast_game_list_update()
+    
+    return {
+        "player_id": disconnected_player_id, 
+        "message": f"Successfully reconnected {player_name} to their original slot"
+    }
+
 @app.post("/api/games/{game_id}/start")
 async def start_game(game_id: str):
     """Start the game"""
@@ -830,6 +914,9 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str, player_id: str)
                     disconnected_players[game_id] = {}
                 disconnected_players[game_id][player_id] = player
                 
+                # Mark the player as disconnected in the game state
+                # but keep them in the players list for proper slot management
+                
                 # Broadcast updated game list to show available slots
                 await _broadcast_game_list_update()
                 
@@ -838,8 +925,12 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str, player_id: str)
                     await _broadcast_game_state(game_id, {
                         "type": "player_disconnected",
                         "message": f"{player.name} disconnected from the game",
-                        "disconnected_player_id": player_id
+                        "disconnected_player_id": player_id,
+                        "can_rejoin": True
                     })
+                    
+                # Also send a message to the lobby to update game status
+                await _broadcast_game_list_update()
 
 async def _broadcast_game_state(game_id: str, additional_data: dict = None):
     """Broadcast game state to all players in a game"""
@@ -888,11 +979,19 @@ async def _send_game_list_to_player(websocket: WebSocket):
         # Count active (connected) players
         active_players = sum(1 for p in game.players if p.id in active_connections)
         
+        # Check for disconnected players
+        disconnected_count = 0
+        if game_id in disconnected_players:
+            disconnected_count = len(disconnected_players[game_id])
+        
         # Determine game status
         if len(game.players) >= 2 and active_players >= 2:
             status = "full"
         elif game.game_started and active_players < 2:
-            status = "waiting_for_replacement"
+            if disconnected_count > 0:
+                status = "waiting_for_rejoin"
+            else:
+                status = "waiting_for_replacement"
         elif not game.game_started:
             status = "waiting"
         else:
@@ -903,6 +1002,7 @@ async def _send_game_list_to_player(websocket: WebSocket):
             "game_code": game.game_code,
             "player_count": len(game.players),
             "active_players": active_players,
+            "disconnected_players": disconnected_count,
             "max_players": 2,
             "game_started": game.game_started,
             "status": status
@@ -925,11 +1025,19 @@ async def _broadcast_game_list_update():
         # Count active (connected) players
         active_players = sum(1 for p in game.players if p.id in active_connections)
         
+        # Check for disconnected players
+        disconnected_count = 0
+        if game_id in disconnected_players:
+            disconnected_count = len(disconnected_players[game_id])
+        
         # Determine game status
         if len(game.players) >= 2 and active_players >= 2:
             status = "full"
         elif game.game_started and active_players < 2:
-            status = "waiting_for_replacement"
+            if disconnected_count > 0:
+                status = "waiting_for_rejoin"
+            else:
+                status = "waiting_for_replacement"
         elif not game.game_started:
             status = "waiting"
         else:
@@ -940,6 +1048,7 @@ async def _broadcast_game_list_update():
             "game_code": game.game_code,
             "player_count": len(game.players),
             "active_players": active_players,
+            "disconnected_players": disconnected_count,
             "max_players": 2,
             "game_started": game.game_started,
             "status": status

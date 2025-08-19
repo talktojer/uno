@@ -123,5 +123,57 @@ class MobileConfig {
       return 8.0;
     }
   }
-}
 
+  // Get mobile-safe padding that accounts for viewport insets
+  static EdgeInsets getMobileSafePadding(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final isMobileDevice = isMobile(context);
+
+    if (isMobileDevice) {
+      return EdgeInsets.only(
+        left: mobileSpacing,
+        right: mobileSpacing,
+        top: mobileSpacing,
+        bottom: mobileSpacing +
+            mediaQuery.padding.bottom +
+            20, // Extra bottom padding for mobile
+      );
+    } else {
+      return EdgeInsets.all(getSpacing(context));
+    }
+  }
+
+  // Get bottom padding that prevents cutoff on mobile devices
+  static double getBottomPadding(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final isMobileDevice = isMobile(context);
+
+    if (isMobileDevice) {
+      return mediaQuery.padding.bottom + 32; // Extra padding for mobile
+    } else {
+      return 24;
+    }
+  }
+
+  // Check if device has notches or system UI that might cause cutoff
+  static bool hasSystemUIOverlap(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    return mediaQuery.padding.bottom > 0 ||
+        mediaQuery.padding.top > 0 ||
+        mediaQuery.viewInsets.bottom > 0;
+  }
+
+  // Get safe area height for mobile devices
+  static double getSafeAreaHeight(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final isMobileDevice = isMobile(context);
+
+    if (isMobileDevice) {
+      return mediaQuery.padding.top +
+          mediaQuery.padding.bottom +
+          40; // Extra buffer
+    } else {
+      return 0;
+    }
+  }
+}
