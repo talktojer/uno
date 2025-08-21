@@ -368,6 +368,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text('You\'re joining game: $gameCode'),
+                  const SizedBox(height: 8),
+                  Text(
+                    'This will join you as a new player. If you were playing this game before and got disconnected, use the "Rejoin Game" option instead.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                      fontStyle: FontStyle.italic,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
                   const SizedBox(height: 16),
                   TextField(
                     controller: nameController,
@@ -469,15 +479,37 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       } else {
         final errorData = json.decode(response.body);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content:
-                Text('Error: ${errorData['detail'] ?? 'Failed to join game'}'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.red,
-            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-          ),
-        );
+        final errorMessage = errorData['detail'] ?? 'Failed to join game';
+
+        // Check if this is a disconnected player error
+        if (errorMessage.contains('disconnected player') ||
+            errorMessage.contains('reconnect feature')) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text(
+                  'This slot belongs to a disconnected player. Use "Rejoin Game" instead.'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.orange,
+              shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+              action: SnackBarAction(
+                label: 'Rejoin',
+                textColor: Colors.white,
+                onPressed: () {
+                  _selectAction('rejoin');
+                },
+              ),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error: $errorMessage'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.red,
+              shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+            ),
+          );
+        }
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -635,15 +667,37 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       } else {
         final errorData = json.decode(response.body);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content:
-                Text('Error: ${errorData['detail'] ?? 'Failed to join game'}'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.red,
-            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-          ),
-        );
+        final errorMessage = errorData['detail'] ?? 'Failed to join game';
+
+        // Check if this is a disconnected player error
+        if (errorMessage.contains('disconnected player') ||
+            errorMessage.contains('reconnect feature')) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text(
+                  'This slot belongs to a disconnected player. Use "Rejoin Game" instead.'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.orange,
+              shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+              action: SnackBarAction(
+                label: 'Rejoin',
+                textColor: Colors.white,
+                onPressed: () {
+                  _selectAction('rejoin');
+                },
+              ),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error: $errorMessage'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.red,
+              shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+            ),
+          );
+        }
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -691,85 +745,184 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      // First check if we can rejoin
-      final checkResponse = await http.get(
+      print(
+          'Rejoin: Starting rejoin process for game code: ${_gameCodeController.text.trim()}');
+      print('Rejoin: Player name: ${_playerNameController.text.trim()}');
+
+      // First, get the game ID from the game code
+      final gameCodeResponse = await http.get(
         Uri.parse(
-            '$apiBaseUrl/api/games/code/${_gameCodeController.text.trim()}/can-rejoin/${_playerNameController.text.trim()}'),
+            '$apiBaseUrl/api/games/code/${_gameCodeController.text.trim()}'),
       );
+
+      print(
+          'Rejoin: Game code response status: ${gameCodeResponse.statusCode}');
+      print('Rejoin: Game code response body: ${gameCodeResponse.body}');
+
+      if (gameCodeResponse.statusCode != 200) {
+        throw Exception('Game code not found');
+      }
+
+      final gameCodeData = json.decode(gameCodeResponse.body);
+      final gameId = gameCodeData['game_id'];
+      print('Rejoin: Found game ID: $gameId');
+
+      // Now check if we can rejoin using the correct endpoint
+      final checkUrl =
+          '$apiBaseUrl/api/games/$gameId/can-rejoin/${_playerNameController.text.trim()}';
+      print('Rejoin: Checking can-rejoin at: $checkUrl');
+
+      final checkResponse = await http.get(Uri.parse(checkUrl));
+
+      print('Rejoin: Can-rejoin response status: ${checkResponse.statusCode}');
+      print('Rejoin: Can-rejoin response body: ${checkResponse.body}');
 
       if (checkResponse.statusCode == 200) {
         final checkData = json.decode(checkResponse.body);
         if (checkData['can_rejoin']) {
+          print('Rejoin: Can rejoin, proceeding with rejoin request');
+
           // Try to rejoin the game
           final rejoinResponse = await http.post(
-            Uri.parse('$apiBaseUrl/api/games/${checkData['game_id']}/rejoin'),
+            Uri.parse('$apiBaseUrl/api/games/$gameId/rejoin'),
             headers: {'Content-Type': 'application/json'},
             body: json.encode({
               'player_name': _playerNameController.text.trim(),
             }),
           );
 
+          print('Rejoin: Rejoin response status: ${rejoinResponse.statusCode}');
+          print('Rejoin: Rejoin response body: ${rejoinResponse.body}');
+
           if (rejoinResponse.statusCode == 200) {
             final data = json.decode(rejoinResponse.body);
             final playerId = data['player_id'];
-            final gameId = checkData['game_id'];
             final playerName = _playerNameController.text.trim();
 
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (context) => GameScreen(
-                  gameId: gameId,
-                  playerId: playerId,
-                  playerName: playerName,
+            print('Rejoin: Successfully rejoined with player ID: $playerId');
+
+            // Successfully rejoined - navigate to game
+            if (mounted) {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => GameScreen(
+                    gameId: gameId,
+                    playerId: playerId,
+                    playerName: playerName,
+                  ),
                 ),
-              ),
-            );
+              );
+            }
           } else {
             final errorData = json.decode(rejoinResponse.body);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(errorData['detail'] ?? 'Failed to rejoin game'),
-                behavior: SnackBarBehavior.floating,
-                backgroundColor: Colors.red,
-                shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-              ),
-            );
+            throw Exception(errorData['detail'] ?? 'Failed to rejoin game');
           }
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(checkData['message'] ?? 'Cannot rejoin game'),
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Colors.orange,
-              shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-            ),
-          );
+          print('Rejoin: Cannot rejoin, reason: ${checkData['message']}');
+          // Can't rejoin - show the reason and offer to join normally
+          _showRejoinNotPossibleDialog(gameId, checkData['message']);
         }
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Game code not found'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Colors.red,
-            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
-          ),
-        );
+        print('Rejoin: Can-rejoin check failed, trying fallback');
+        // If can-rejoin check fails, try to join normally as a fallback
+        _showRejoinFallbackDialog(gameId);
       }
     } catch (e) {
+      print('Rejoin: Error occurred: $e');
+      // If any step fails, show error and offer to join normally
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error: $e'),
+          content: Text('Rejoin failed: $e'),
           behavior: SnackBarBehavior.floating,
           backgroundColor: Colors.red,
           shape: RoundedRectangleBorder(borderRadius: _borderRadius),
         ),
       );
+
+      // Try to get game ID for fallback
+      try {
+        final gameCodeResponse = await http.get(
+          Uri.parse(
+              '$apiBaseUrl/api/games/code/${_gameCodeController.text.trim()}'),
+        );
+        if (gameCodeResponse.statusCode == 200) {
+          final gameCodeData = json.decode(gameCodeResponse.body);
+          final gameId = gameCodeData['game_id'];
+          _showRejoinFallbackDialog(gameId);
+        }
+      } catch (fallbackError) {
+        // If even fallback fails, just show the error
+        print('Rejoin: Fallback also failed: $fallbackError');
+      }
     } finally {
       setState(() {
         _isLoading = false;
       });
     }
+  }
+
+  void _showRejoinNotPossibleDialog(String gameId, String reason) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Cannot Rejoin'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('You cannot rejoin this game because:'),
+              const SizedBox(height: 8),
+              Text(reason, style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 16),
+              const Text(
+                  'Would you like to try joining the game normally instead?'),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _showJoinGameDialog(_gameCodeController.text.trim(), gameId);
+              },
+              child: const Text('Join Normally'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showRejoinFallbackDialog(String gameId) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Rejoin Not Available'),
+          content:
+              const Text('The rejoin feature is not available for this game. '
+                  'Would you like to try joining the game normally instead?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _showJoinGameDialog(_gameCodeController.text.trim(), gameId);
+              },
+              child: const Text('Join Normally'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   // New helper methods for improved UX
@@ -951,6 +1104,33 @@ class _HomeScreenState extends State<HomeScreen> {
               setState(() {});
             },
           ),
+
+          SizedBox(height: 8),
+
+          // Help text about names and rejoining
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: Colors.blue.withOpacity(0.2)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.lightbulb_outline, color: Colors.blue, size: 16),
+                SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Tip: Use the same name if you want to rejoin a game later',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.blue[700],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -1044,7 +1224,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   : null,
               icon: Icon(Icons.replay, size: 24),
               label: Text(
-                'Rejoin Game',
+                'Rejoin Game (Restore Progress)',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
               style: ElevatedButton.styleFrom(
@@ -1057,6 +1237,33 @@ class _HomeScreenState extends State<HomeScreen> {
                 elevation: 4,
               ),
             ),
+          ),
+
+          SizedBox(height: 8),
+
+          // Small info text about rejoin
+          Text(
+            'Use this if you got disconnected and want to continue your game with the same cards and progress',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[600],
+              fontStyle: FontStyle.italic,
+            ),
+            textAlign: TextAlign.center,
+          ),
+
+          SizedBox(height: 16),
+
+          // Divider and explanation
+          Divider(color: Colors.grey[300]),
+          SizedBox(height: 8),
+          Text(
+            'Not sure? Use "Join Existing Game" if you\'re new to the game, or "Rejoin Game" if you were playing before.',
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey[500],
+            ),
+            textAlign: TextAlign.center,
           ),
         ],
       ),
@@ -1376,7 +1583,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           SizedBox(height: 16),
           Text(
-            'Reconnect to a game you were playing if you got disconnected.',
+            'Reconnect to a game you were playing if you got disconnected. '
+            'This will restore your exact game state and cards.',
             style: TextStyle(
               fontSize: 14,
               color: Colors.grey[600],
@@ -1384,17 +1592,44 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           SizedBox(height: 20),
 
+          // Info box about rejoining
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.orange.withOpacity(0.3)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, color: Colors.orange, size: 20),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Enter the same name you used when you first joined the game.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.orange[700],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          SizedBox(height: 20),
+
           TextField(
             controller: _gameCodeController,
             decoration: InputDecoration(
               labelText: 'Game Code',
-              hintText: 'Enter the game code you were playing',
+              hintText: 'Enter the 5-character game code',
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
               filled: true,
               fillColor: Colors.grey[50],
-              prefixIcon: Icon(Icons.replay, color: Colors.orange),
+              prefixIcon: Icon(Icons.qr_code, color: Colors.orange),
               counterText: '${_gameCodeController.text.length}/5',
             ),
             maxLength: 5,
@@ -1434,6 +1669,25 @@ class _HomeScreenState extends State<HomeScreen> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 elevation: 4,
+              ),
+            ),
+          ),
+
+          SizedBox(height: 16),
+
+          // Alternative option
+          SizedBox(
+            width: double.infinity,
+            child: TextButton.icon(
+              onPressed: () {
+                // Switch to join mode instead
+                _selectAction('join');
+              },
+              icon: Icon(Icons.login, size: 20),
+              label: Text('Join as New Player Instead'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.blue[600],
+                padding: EdgeInsets.symmetric(vertical: 12),
               ),
             ),
           ),
