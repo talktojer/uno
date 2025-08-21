@@ -859,25 +859,38 @@ async def lobby_websocket_endpoint(websocket: WebSocket, player_id: str):
 @app.websocket("/ws/{game_id}/{player_id}")
 async def websocket_endpoint(websocket: WebSocket, game_id: str, player_id: str):
     await websocket.accept()
+    print(f"WebSocket connection accepted for game {game_id}, player {player_id}")
+    
+    # Store the connection
     active_connections[player_id] = websocket
     
     # Send initial game state to the newly connected player
     if game_id in games:
         game = games[game_id]
         game_state = game.get_game_state()
+        print(f"Sending initial game state to player {player_id}")
         await websocket.send_text(json.dumps({
             "type": "game_update",
             "game_state": game_state.model_dump(),  # Use model_dump() for Pydantic v2
         }))
+    else:
+        print(f"Game {game_id} not found for player {player_id}")
+        await websocket.send_text(json.dumps({
+            "type": "error",
+            "message": "Game not found"
+        }))
+        return
     
     try:
         while True:
             # Handle incoming messages
             data = await websocket.receive_text()
             message = json.loads(data)
+            print(f"Received WebSocket message from {player_id}: {message}")
             
             # Handle different message types
             if message.get("type") == "ping":
+                print(f"Sending pong to {player_id}")
                 await websocket.send_text(json.dumps({"type": "pong"}))
             elif message.get("type") == "play_card":
                 # Handle playing a card
@@ -937,6 +950,34 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str, player_id: str)
                         await websocket.send_text(json.dumps({
                             "type": "error",
                             "message": "Need exactly 2 players to start"
+                        }))
+                else:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "message": "Game not found"
+                    }))
+                    
+            elif message.get("type") == "join_game":
+                # Handle player joining the game via WebSocket
+                if game_id in games:
+                    game = games[game_id]
+                    # Verify this player is actually in the game
+                    player_in_game = next((p for p in game.players if p.id == player_id), None)
+                    if player_in_game:
+                        print(f"Player {player_id} joined game {game_id} via WebSocket")
+                        # Send confirmation that they're properly connected
+                        await websocket.send_text(json.dumps({
+                            "type": "join_confirmed",
+                            "message": f"Successfully joined game {game_id}",
+                            "player_id": player_id
+                        }))
+                        
+                        # Broadcast updated game state to all players
+                        await _broadcast_game_state(game_id)
+                    else:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "message": "Player not found in game"
                         }))
                 else:
                     await websocket.send_text(json.dumps({

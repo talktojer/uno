@@ -30,7 +30,8 @@ class WebSocketManager {
   Function()? onConnected;
   Function()? onDisconnected;
 
-  bool get isConnected => _channel != null && _channel!.sink != null;
+  bool get isConnected =>
+      _channel != null && _channel!.sink != null && !_isConnecting;
   bool get isConnecting => _isConnecting;
 
   // Check if the connection is ready to send/receive messages
@@ -77,13 +78,21 @@ class WebSocketManager {
         },
       );
 
-      _isConnecting = false;
-      _reconnectAttempts = 0;
-      print('WebSocket connection established successfully'); // Debug log
-      onConnected?.call();
+      // Wait a bit for the connection to be fully established
+      Timer(const Duration(milliseconds: 500), () {
+        if (_channel != null && _channel!.sink != null) {
+          _isConnecting = false;
+          _reconnectAttempts = 0;
+          print('WebSocket connection established successfully'); // Debug log
+          onConnected?.call();
 
-      // Start ping timer
-      _startPingTimer();
+          // Start ping timer
+          _startPingTimer();
+        } else {
+          print('WebSocket connection not ready after 500ms');
+          _handleDisconnection();
+        }
+      });
     } catch (e) {
       print('Error connecting to WebSocket: $e');
       _isConnecting = false;
@@ -122,8 +131,13 @@ class WebSocketManager {
 
   void _startPingTimer() {
     _pingTimer = Timer.periodic(_pingInterval, (timer) {
-      if (isConnected) {
+      if (isConnected && _channel != null && _channel!.sink != null) {
+        print('Sending ping to WebSocket');
         send({'type': 'ping'});
+      } else {
+        print('Cannot send ping - connection not ready');
+        timer.cancel();
+        _pingTimer = null;
       }
     });
   }
@@ -134,13 +148,17 @@ class WebSocketManager {
   }
 
   void send(Map<String, dynamic> message) {
-    if (isConnected) {
+    if (isConnected && _channel != null && _channel!.sink != null) {
       try {
+        print('Sending WebSocket message: $message');
         _channel!.sink.add(json.encode(message));
       } catch (e) {
         print('Error sending WebSocket message: $e');
         _handleDisconnection();
       }
+    } else {
+      print(
+          'Cannot send message - connection not ready. isConnected: $isConnected, channel: ${_channel != null}, sink: ${_channel?.sink != null}');
     }
   }
 
@@ -238,6 +256,9 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _connectLobbyWebSocket();
 
+    // Load saved player name from local storage
+    _loadSavedPlayerName();
+
     // Handle initial game code from URL
     if (widget.initialGameCode != null) {
       _gameCodeController.text = widget.initialGameCode!;
@@ -246,6 +267,55 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Check URL for game code on web (for direct navigation)
     _checkUrlForGameCode();
+  }
+
+  // Load saved player name from local storage
+  void _loadSavedPlayerName() {
+    try {
+      final savedName = html.window.localStorage['uno_player_name'];
+      if (savedName != null && savedName.isNotEmpty) {
+        _playerNameController.text = savedName;
+        print('Loaded saved player name: $savedName');
+      } else {
+        print('No saved player name found in local storage');
+      }
+    } catch (e) {
+      print('Error loading saved player name: $e');
+    }
+  }
+
+  // Save player name to local storage
+  void _savePlayerName(String name) {
+    try {
+      if (name.trim().isNotEmpty) {
+        html.window.localStorage['uno_player_name'] = name.trim();
+        print('Saved player name: ${name.trim()}');
+      }
+    } catch (e) {
+      print('Error saving player name: $e');
+    }
+  }
+
+  // Clear saved player name from local storage
+  void _clearSavedPlayerName() {
+    try {
+      html.window.localStorage.remove('uno_player_name');
+      _playerNameController.clear();
+      print('Cleared saved player name');
+      setState(() {});
+    } catch (e) {
+      print('Error clearing saved player name: $e');
+    }
+  }
+
+  // Check if there's a saved player name
+  bool get _hasSavedName {
+    try {
+      final savedName = html.window.localStorage['uno_player_name'];
+      return savedName != null && savedName.isNotEmpty;
+    } catch (e) {
+      return false;
+    }
   }
 
   void _checkUrlForGameCode() {
@@ -284,12 +354,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
         // Check if user has played this game before by looking for session tokens
         bool hasExistingSession = false;
+        String? existingPlayerName;
         try {
           // Check all possible session keys for this game
           final keys = html.window.localStorage.keys;
           for (final key in keys) {
             if (key.startsWith('uno_session_${gameId}_')) {
               hasExistingSession = true;
+              // Extract player name from session key
+              final parts = key.split('_');
+              if (parts.length >= 3) {
+                existingPlayerName = parts.sublist(2).join('_');
+              }
               break;
             }
           }
@@ -299,10 +375,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
         // If there are disconnected players or user has existing session, suggest rejoin
         if (disconnectedCount > 0 || hasExistingSession) {
+          // Pre-fill player name if we found an existing session
+          if (existingPlayerName != null &&
+              _playerNameController.text.isEmpty) {
+            _playerNameController.text = existingPlayerName;
+            _savePlayerName(existingPlayerName);
+          }
           _showRejoinOrJoinDialog(gameCode, gameId);
         } else {
           // No disconnected players or existing session, show normal join dialog
-          _showJoinGameDialog(gameCode, gameId);
+          _showRejoinOrJoinDialog(gameCode, gameId);
         }
       }
     } catch (e) {
@@ -392,8 +474,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(color: Colors.orange.withOpacity(0.3)),
                 ),
-                child: const Text(
-                  'Tip: Use the same name you used before if you want to rejoin',
+                child: Text(
+                  'Your name "${_playerNameController.text.isNotEmpty ? _playerNameController.text : 'is ready'}" is automatically filled in for rejoining',
                   style: TextStyle(fontSize: 12, color: Colors.orange),
                 ),
               ),
@@ -466,6 +548,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _showJoinGameDialog(String gameCode, String gameId) {
     final nameController = TextEditingController();
+    // Pre-fill with saved player name if available
+    if (_playerNameController.text.isNotEmpty) {
+      nameController.text = _playerNameController.text;
+    }
     bool isLoading = false;
 
     showDialog(
@@ -583,6 +669,9 @@ class _HomeScreenState extends State<HomeScreen> {
           print(
               'Stored session token for game ${data['game_id']} and player $playerName');
         }
+
+        // Save player name for future use
+        _savePlayerName(playerName);
 
         // Navigate directly to game screen
         if (mounted) {
@@ -712,6 +801,10 @@ class _HomeScreenState extends State<HomeScreen> {
           _showCreateGameSection = true;
           _selectedAction = 'create';
         });
+
+        // Save player name for future use
+        _savePlayerName(_playerNameController.text);
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Game created: ${data['game_code']}'),
@@ -780,6 +873,9 @@ class _HomeScreenState extends State<HomeScreen> {
           print(
               'Stored session token for game ${data['game_id']} and player ${_playerNameController.text}');
         }
+
+        // Save player name for future use
+        _savePlayerName(_playerNameController.text);
 
         // Navigate to game screen
         if (mounted) {
@@ -946,6 +1042,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 print(
                     'Rejoin: Successfully rejoined with player ID: $playerId');
+
+                // Save player name for future use
+                _savePlayerName(playerName);
 
                 // Successfully rejoined - navigate to game
                 if (mounted) {
@@ -1257,22 +1356,44 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
           SizedBox(height: 16),
-          TextField(
-            controller: _playerNameController,
-            decoration: InputDecoration(
-              hintText: 'Enter your name to start',
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _playerNameController,
+                  decoration: InputDecoration(
+                    hintText: 'Enter your name to start',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    filled: true,
+                    fillColor: Colors.grey[50],
+                    prefixIcon: Icon(Icons.edit, color: Colors.blue),
+                  ),
+                  textInputAction: TextInputAction.done,
+                  onChanged: (value) {
+                    // Enable/disable action buttons based on name input
+                    setState(() {});
+                    // Save the name as the user types
+                    if (value.trim().isNotEmpty) {
+                      _savePlayerName(value);
+                    }
+                  },
+                ),
               ),
-              filled: true,
-              fillColor: Colors.grey[50],
-              prefixIcon: Icon(Icons.edit, color: Colors.blue),
-            ),
-            textInputAction: TextInputAction.done,
-            onChanged: (value) {
-              // Enable/disable action buttons based on name input
-              setState(() {});
-            },
+              if (_playerNameController.text.isNotEmpty) ...[
+                SizedBox(width: 8),
+                IconButton(
+                  onPressed: _clearSavedPlayerName,
+                  icon: Icon(Icons.clear, color: Colors.grey[600]),
+                  tooltip: 'Clear saved name',
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.grey[100],
+                    padding: EdgeInsets.all(8),
+                  ),
+                ),
+              ],
+            ],
           ),
 
           SizedBox(height: 8),
@@ -1281,20 +1402,33 @@ class _HomeScreenState extends State<HomeScreen> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: Colors.blue.withOpacity(0.1),
+              color: _hasSavedName
+                  ? Colors.green.withOpacity(0.1)
+                  : Colors.blue.withOpacity(0.1),
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: Colors.blue.withOpacity(0.2)),
+              border: Border.all(
+                  color: _hasSavedName
+                      ? Colors.green.withOpacity(0.3)
+                      : Colors.blue.withOpacity(0.2)),
             ),
             child: Row(
               children: [
-                Icon(Icons.lightbulb_outline, color: Colors.blue, size: 16),
+                Icon(
+                    _hasSavedName
+                        ? Icons.check_circle
+                        : Icons.lightbulb_outline,
+                    color: _hasSavedName ? Colors.green : Colors.blue,
+                    size: 16),
                 SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    'Tip: Use the same name if you want to rejoin a game later',
+                    _hasSavedName
+                        ? 'Your name "${_playerNameController.text}" is saved and will be remembered when you rejoin games'
+                        : 'Tip: Your name is automatically saved and will be remembered when you rejoin games',
                     style: TextStyle(
                       fontSize: 11,
-                      color: Colors.blue[700],
+                      color:
+                          _hasSavedName ? Colors.green[700] : Colors.blue[700],
                     ),
                   ),
                 ),
@@ -1776,7 +1910,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Enter the same name you used when you first joined the game.',
+                    'Your name is automatically filled in. If you want to rejoin as a different player, change the name above.',
                     style: TextStyle(
                       fontSize: 12,
                       color: Colors.orange[700],
@@ -2345,6 +2479,17 @@ class _GameScreenState extends State<GameScreen>
         );
       } else if (messageData['type'] == 'pong') {
         print('Pong received'); // Debug log
+      } else if (messageData['type'] == 'join_confirmed') {
+        print('Join confirmed: ${messageData['message']}'); // Debug log
+        // Player successfully joined the game via WebSocket
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(messageData['message']),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.green,
+            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+          ),
+        );
       } else {
         print('Unknown message type: ${messageData['type']}'); // Debug log
         print('Full message: $messageData'); // Debug log
@@ -2380,15 +2525,22 @@ class _GameScreenState extends State<GameScreen>
         _isReconnecting = false;
       });
 
-      // Send a ping to confirm the connection is working
-      _gameWebSocket!.send({'type': 'ping'});
+      // Wait a bit for the connection to be fully stable before sending messages
+      Timer(const Duration(milliseconds: 1000), () {
+        if (_gameWebSocket != null && _gameWebSocket!.isConnected) {
+          print('Sending initial messages after connection stabilization');
 
-      // Also send a join message to ensure the server knows we're here
-      _gameWebSocket!.send({
-        'type': 'join_game',
-        'game_id': widget.gameId,
-        'player_id': widget.playerId,
-        'player_name': widget.playerName,
+          // Send a ping to confirm the connection is working
+          _gameWebSocket!.send({'type': 'ping'});
+
+          // Also send a join message to ensure the server knows we're here
+          _gameWebSocket!.send({
+            'type': 'join_game',
+            'game_id': widget.gameId,
+            'player_id': widget.playerId,
+            'player_name': widget.playerName,
+          });
+        }
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -2419,12 +2571,7 @@ class _GameScreenState extends State<GameScreen>
       );
     };
 
-    // Send a ping to test the connection
-    Timer.periodic(const Duration(seconds: 30), (timer) {
-      if (_gameWebSocket != null && _gameWebSocket!.isConnected) {
-        _gameWebSocket!.send({'type': 'ping'});
-      }
-    });
+    // Note: Ping is handled by WebSocketManager, no need for duplicate timer here
 
     // Fallback: fetch initial game state via HTTP if WebSocket doesn't provide it
     Timer(const Duration(seconds: 2), () {
@@ -2434,10 +2581,10 @@ class _GameScreenState extends State<GameScreen>
       }
     });
 
-    // Connection timeout: if we're still connecting after 10 seconds, show an error
-    Timer(const Duration(seconds: 10), () {
+    // Connection timeout: if we're still connecting after 15 seconds, show an error
+    Timer(const Duration(seconds: 15), () {
       if (_isConnecting && !_isConnected) {
-        print('Connection timeout - still connecting after 10 seconds');
+        print('Connection timeout - still connecting after 15 seconds');
         setState(() {
           _isConnecting = false;
         });
@@ -2455,7 +2602,7 @@ class _GameScreenState extends State<GameScreen>
     });
 
     // Also add a shorter timeout for the initial connection attempt
-    Timer(const Duration(seconds: 5), () {
+    Timer(const Duration(seconds: 8), () {
       if (_isConnecting && !_isConnected) {
         print('Initial connection attempt taking longer than expected...');
         // Don't show an error yet, just log it
