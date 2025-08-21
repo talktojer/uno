@@ -258,12 +258,58 @@ class _HomeScreenState extends State<HomeScreen> {
         final gameCode = pathname.substring(1);
         if (gameCode.length == 5) {
           _gameCodeController.text = gameCode;
-          // Check if this game code is valid and show join dialog
-          _checkGameCode(gameCode);
+          // Check if this game code is valid and suggest appropriate action
+          _checkGameCodeAndSuggestAction(gameCode);
         }
       }
     } catch (e) {
       // Not running on web or error occurred
+    }
+  }
+
+  Future<void> _checkGameCodeAndSuggestAction(String gameCode) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$apiBaseUrl/api/games/code/$gameCode'),
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final gameId = data['game_id'];
+        final disconnectedCount = data['disconnected_players'] ?? 0;
+
+        setState(() {
+          _gameId = gameId;
+        });
+
+        // Check if user has played this game before by looking for session tokens
+        bool hasExistingSession = false;
+        try {
+          // Check all possible session keys for this game
+          final keys = html.window.localStorage.keys;
+          for (final key in keys) {
+            if (key.startsWith('uno_session_${gameId}_')) {
+              hasExistingSession = true;
+              break;
+            }
+          }
+        } catch (e) {
+          print('Error checking local storage: $e');
+        }
+
+        // If there are disconnected players or user has existing session, suggest rejoin
+        if (disconnectedCount > 0 || hasExistingSession) {
+          _showRejoinOrJoinDialog(gameCode, gameId);
+        } else {
+          // No disconnected players or existing session, show normal join dialog
+          _showJoinGameDialog(gameCode, gameId);
+        }
+      }
+    } catch (e) {
+      // Game code not found or error occurred
+      if (widget.initialGameCode != null) {
+        _showInvalidGameCodeDialog(gameCode);
+      }
     }
   }
 
@@ -317,6 +363,72 @@ class _HomeScreenState extends State<HomeScreen> {
         _showInvalidGameCodeDialog(gameCode);
       }
     }
+  }
+
+  void _showRejoinOrJoinDialog(String gameCode, String gameId) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Game Found'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Game code "$gameCode" found!'),
+              const SizedBox(height: 8),
+              const Text(
+                'This game has disconnected players. You can either:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              const Text('• Rejoin if you were playing this game before'),
+              const Text('• Join as a new player'),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                ),
+                child: const Text(
+                  'Tip: Use the same name you used before if you want to rejoin',
+                  style: TextStyle(fontSize: 12, color: Colors.orange),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _clearGameCodeAndReturnHome();
+              },
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _selectAction('rejoin');
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Rejoin Game'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _showJoinGameDialog(gameCode, gameId);
+              },
+              child: const Text('Join as New Player'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _showInvalidGameCodeDialog(String gameCode) {
@@ -463,6 +575,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
+
+        // Store session token for potential rejoin
+        if (data['session_token'] != null) {
+          final storageKey = 'uno_session_${data['game_id']}_$playerName';
+          html.window.localStorage[storageKey] = data['session_token'];
+          print(
+              'Stored session token for game ${data['game_id']} and player $playerName');
+        }
 
         // Navigate directly to game screen
         if (mounted) {
@@ -652,6 +772,15 @@ class _HomeScreenState extends State<HomeScreen> {
           _gameId = data['game_id'];
         });
 
+        // Store session token for potential rejoin
+        if (data['session_token'] != null) {
+          final storageKey =
+              'uno_session_${data['game_id']}_${_playerNameController.text}';
+          html.window.localStorage[storageKey] = data['session_token'];
+          print(
+              'Stored session token for game ${data['game_id']} and player ${_playerNameController.text}');
+        }
+
         // Navigate to game screen
         if (mounted) {
           Navigator.pushReplacement(
@@ -767,66 +896,107 @@ class _HomeScreenState extends State<HomeScreen> {
       final gameId = gameCodeData['game_id'];
       print('Rejoin: Found game ID: $gameId');
 
-      // Now check if we can rejoin using the correct endpoint
-      final checkUrl =
-          '$apiBaseUrl/api/games/$gameId/can-rejoin/${_playerNameController.text.trim()}';
-      print('Rejoin: Checking can-rejoin at: $checkUrl');
+      // First check if this player has an active session
+      final sessionUrl =
+          '$apiBaseUrl/api/games/$gameId/session/${_playerNameController.text.trim()}';
+      print('Rejoin: Checking session at: $sessionUrl');
 
-      final checkResponse = await http.get(Uri.parse(checkUrl));
+      final sessionResponse = await http.get(Uri.parse(sessionUrl));
+      print('Rejoin: Session response status: ${sessionResponse.statusCode}');
+      print('Rejoin: Session response body: ${sessionResponse.body}');
 
-      print('Rejoin: Can-rejoin response status: ${checkResponse.statusCode}');
-      print('Rejoin: Can-rejoin response body: ${checkResponse.body}');
+      if (sessionResponse.statusCode == 200) {
+        final sessionData = json.decode(sessionResponse.body);
+        if (sessionData['has_session']) {
+          print('Rejoin: Player has active session, checking if can rejoin');
 
-      if (checkResponse.statusCode == 200) {
-        final checkData = json.decode(checkResponse.body);
-        if (checkData['can_rejoin']) {
-          print('Rejoin: Can rejoin, proceeding with rejoin request');
+          // Now check if we can rejoin using the correct endpoint
+          final checkUrl =
+              '$apiBaseUrl/api/games/$gameId/can-rejoin/${_playerNameController.text.trim()}';
+          print('Rejoin: Checking can-rejoin at: $checkUrl');
 
-          // Try to rejoin the game
-          final rejoinResponse = await http.post(
-            Uri.parse('$apiBaseUrl/api/games/$gameId/rejoin'),
-            headers: {'Content-Type': 'application/json'},
-            body: json.encode({
-              'player_name': _playerNameController.text.trim(),
-            }),
-          );
+          final checkResponse = await http.get(Uri.parse(checkUrl));
 
-          print('Rejoin: Rejoin response status: ${rejoinResponse.statusCode}');
-          print('Rejoin: Rejoin response body: ${rejoinResponse.body}');
+          print(
+              'Rejoin: Can-rejoin response status: ${checkResponse.statusCode}');
+          print('Rejoin: Can-rejoin response body: ${checkResponse.body}');
 
-          if (rejoinResponse.statusCode == 200) {
-            final data = json.decode(rejoinResponse.body);
-            final playerId = data['player_id'];
-            final playerName = _playerNameController.text.trim();
+          if (checkResponse.statusCode == 200) {
+            final checkData = json.decode(checkResponse.body);
+            if (checkData['can_rejoin']) {
+              print('Rejoin: Can rejoin, proceeding with rejoin request');
 
-            print('Rejoin: Successfully rejoined with player ID: $playerId');
-
-            // Successfully rejoined - navigate to game
-            if (mounted) {
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => GameScreen(
-                    gameId: gameId,
-                    playerId: playerId,
-                    playerName: playerName,
-                  ),
-                ),
+              // Try to rejoin the game
+              final rejoinResponse = await http.post(
+                Uri.parse('$apiBaseUrl/api/games/$gameId/rejoin'),
+                headers: {'Content-Type': 'application/json'},
+                body: json.encode({
+                  'player_name': _playerNameController.text.trim(),
+                }),
               );
+
+              print(
+                  'Rejoin: Rejoin response status: ${rejoinResponse.statusCode}');
+              print('Rejoin: Rejoin response body: ${rejoinResponse.body}');
+
+              if (rejoinResponse.statusCode == 200) {
+                final data = json.decode(rejoinResponse.body);
+                final playerId = data['player_id'];
+                final playerName = _playerNameController.text.trim();
+
+                print(
+                    'Rejoin: Successfully rejoined with player ID: $playerId');
+
+                // Successfully rejoined - navigate to game
+                if (mounted) {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => GameScreen(
+                        gameId: gameId,
+                        playerId: playerId,
+                        playerName: playerName,
+                      ),
+                    ),
+                  );
+                }
+              } else {
+                final errorData = json.decode(rejoinResponse.body);
+                throw Exception(errorData['detail'] ?? 'Failed to rejoin game');
+              }
+            } else {
+              print('Rejoin: Cannot rejoin, reason: ${checkData['message']}');
+              // Can't rejoin - show the reason and offer to join normally
+              _showRejoinNotPossibleDialog(gameId, checkData['message']);
             }
           } else {
-            final errorData = json.decode(rejoinResponse.body);
-            throw Exception(errorData['detail'] ?? 'Failed to rejoin game');
+            print('Rejoin: Can-rejoin check failed, trying fallback');
+            // If can-rejoin check fails, try to join normally as a fallback
+            _showRejoinFallbackDialog(gameId);
           }
         } else {
-          print('Rejoin: Cannot rejoin, reason: ${checkData['message']}');
-          // Can't rejoin - show the reason and offer to join normally
-          _showRejoinNotPossibleDialog(gameId, checkData['message']);
+          print('Rejoin: Player has no active session, cannot rejoin');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text(
+                  'You have not played this game before. Use "Join as New Player" instead.'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.orange,
+              shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+            ),
+          );
         }
       } else {
-        print('Rejoin: Can-rejoin check failed, trying fallback');
-        // If can-rejoin check fails, try to join normally as a fallback
-        _showRejoinFallbackDialog(gameId);
+        print('Rejoin: Session check failed');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content:
+                const Text('Failed to check player session. Please try again.'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.red,
+            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+          ),
+        );
       }
     } catch (e) {
       print('Rejoin: Error occurred: $e');

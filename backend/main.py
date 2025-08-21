@@ -303,6 +303,8 @@ active_connections: Dict[str, WebSocket] = {}
 player_identities: Dict[str, Dict[str, str]] = {}  # game_id -> {player_id -> original_slot_owner}
 # Track disconnected players for proper restoration
 disconnected_players: Dict[str, Dict[str, Player]] = {}  # game_id -> {player_id -> Player}
+# Track player sessions for rejoining
+player_sessions: Dict[str, Dict[str, str]] = {}  # game_id -> {player_name -> session_token}
 
 @app.get("/")
 async def root():
@@ -358,12 +360,18 @@ async def get_game_by_code(game_code: str):
     game_id = games_by_code[game_code]
     game = games[game_id]
     
+    # Count disconnected players
+    disconnected_count = 0
+    if game_id in disconnected_players:
+        disconnected_count = len(disconnected_players[game_id])
+    
     return {
         "game_id": game_id,
         "game_code": game_code,
         "player_count": len(game.players),
         "max_players": 2,
         "game_started": game.game_started,
+        "disconnected_players": disconnected_count,
         "status": "full" if len(game.players) >= 2 else "waiting" if not game.game_started else "in_progress"
     }
 
@@ -459,6 +467,13 @@ async def join_game(game_id: str, request: JoinGameRequest):
     # Broadcast updated game list to all connected players
     await _broadcast_game_list_update()
     
+    # Generate session token for this player
+    import secrets
+    session_token = secrets.token_urlsafe(32)
+    if game_id not in player_sessions:
+        player_sessions[game_id] = {}
+    player_sessions[game_id][request.player_name] = session_token
+    
     # If this is a replacement in a started game, broadcast the updated game state
     if game.game_started:
         await _broadcast_game_state(game_id, {
@@ -467,7 +482,12 @@ async def join_game(game_id: str, request: JoinGameRequest):
             "new_player": player.model_dump()
         })
     
-    return {"player_id": player_id, "message": message}
+    return {
+        "player_id": player_id, 
+        "game_id": game_id, 
+        "session_token": session_token,
+        "message": message
+    }
 
 @app.post("/api/games/join-by-code")
 async def join_game_by_code(request: JoinGameByCodeRequest):
@@ -542,6 +562,13 @@ async def join_game_by_code(request: JoinGameByCodeRequest):
     # Broadcast updated game list to all connected players
     await _broadcast_game_list_update()
     
+    # Generate session token for this player
+    import secrets
+    session_token = secrets.token_urlsafe(32)
+    if game_id not in player_sessions:
+        player_sessions[game_id] = {}
+    player_sessions[game_id][player_name] = session_token
+    
     # If this is a replacement in a started game, broadcast the updated game state
     if game.game_started:
         await _broadcast_game_state(game_id, {
@@ -550,7 +577,12 @@ async def join_game_by_code(request: JoinGameByCodeRequest):
             "new_player": player.model_dump()
         })
     
-    return {"player_id": player_id, "game_id": game_id, "message": message}
+    return {
+        "player_id": player_id, 
+        "game_id": game_id, 
+        "session_token": session_token,
+        "message": message
+    }
 
 # Add new endpoint for checking if a player can rejoin
 @app.get("/api/games/{game_id}/can-rejoin/{player_name}")
@@ -634,6 +666,42 @@ async def rejoin_game(game_id: str, request: JoinGameRequest):
     return {
         "player_id": disconnected_player_id, 
         "message": f"Successfully reconnected {player_name} to their original slot"
+    }
+
+@app.get("/api/games/{game_id}/session/{player_name}")
+async def check_player_session(game_id: str, player_name: str):
+    """Check if a player has an active session in this game"""
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    
+    # Check if player has an active session
+    has_session = False
+    can_rejoin = False
+    message = "No active session found"
+    
+    if game_id in player_sessions and player_name in player_sessions[game_id]:
+        has_session = True
+        
+        # Check if they can rejoin (either disconnected or active)
+        if game_id in disconnected_players:
+            for player_id, player in disconnected_players[game_id].items():
+                if player.name == player_name:
+                    can_rejoin = True
+                    message = f"Found active session for '{player_name}' - can rejoin"
+                    break
+        
+        if not can_rejoin:
+            # Check if they're currently active in the game
+            for player in games[game_id].players:
+                if player.name == player_name and player.id in active_connections:
+                    can_rejoin = True
+                    message = f"Found active session for '{player_name}' - already connected"
+                    break
+    
+    return {
+        "has_session": has_session,
+        "can_rejoin": can_rejoin,
+        "message": message
     }
 
 @app.post("/api/games/{game_id}/start")
