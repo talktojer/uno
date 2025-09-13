@@ -72,6 +72,7 @@ class GameState(BaseModel):
     current_color: CardColor
     current_direction: int  # 1 for clockwise, -1 for counter-clockwise
     game_started: bool = False
+    game_ended: bool = False
     winner: Optional[str] = None
 
 # Game Logic
@@ -86,6 +87,7 @@ class UNOGame:
         self.current_color: CardColor = CardColor.RED
         self.current_direction = 1
         self.game_started = False
+        self.game_ended = False
         self.winner: Optional[str] = None
         self._initialize_deck()
     
@@ -233,6 +235,7 @@ class UNOGame:
         # Check for winner
         if len(player.cards) == 0:
             self.winner = player.id
+            self.game_ended = True
             return {"game_over": True, "winner": player.id}
         
         # Move to next player if not skipped
@@ -288,6 +291,7 @@ class UNOGame:
             current_color=self.current_color,
             current_direction=self.current_direction,
             game_started=self.game_started,
+            game_ended=self.game_ended,
             winner=self.winner
         )
     
@@ -341,6 +345,10 @@ async def list_games():
     """List all available games"""
     available_games = []
     for game_id, game in games.items():
+        # Skip ended games
+        if game.game_ended:
+            continue
+            
         available_games.append({
             "game_id": game_id,
             "game_code": game.game_code,
@@ -359,6 +367,10 @@ async def get_game_by_code(game_code: str):
     
     game_id = games_by_code[game_code]
     game = games[game_id]
+    
+    # Check if game has ended
+    if game.game_ended:
+        raise HTTPException(status_code=410, detail="Game has ended")
     
     # Count disconnected players
     disconnected_count = 0

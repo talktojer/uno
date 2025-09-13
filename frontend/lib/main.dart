@@ -438,6 +438,21 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           );
         }
+      } else if (response.statusCode == 410) {
+        // Game has ended
+        final errorData = json.decode(response.body);
+        final errorMessage = errorData['detail'] ?? 'Game has ended';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('This game has ended: $errorMessage'),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.red,
+            shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+          ),
+        );
+        if (widget.initialGameCode != null) {
+          _showInvalidGameCodeDialog(gameCode);
+        }
       }
     } catch (e) {
       // Game code not found or error occurred
@@ -690,8 +705,23 @@ class _HomeScreenState extends State<HomeScreen> {
         final errorData = json.decode(response.body);
         final errorMessage = errorData['detail'] ?? 'Failed to join game';
 
+        // Check if this is a game ended error
+        if (response.statusCode == 410 ||
+            errorMessage.contains('Game has ended')) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content:
+                  const Text('This game has ended and is no longer available.'),
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.red,
+              shape: RoundedRectangleBorder(borderRadius: _borderRadius),
+            ),
+          );
+          // Refresh the game list to remove ended games
+          _connectLobbyWebSocket();
+        }
         // Check if this is a disconnected player error
-        if (errorMessage.contains('disconnected player') ||
+        else if (errorMessage.contains('disconnected player') ||
             errorMessage.contains('reconnect feature')) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -2115,19 +2145,23 @@ class _HomeScreenState extends State<HomeScreen> {
                                 icon: const Icon(Icons.play_arrow,
                                     color: Colors.green),
                                 onPressed: () {
-                                  _gameCodeController.text =
-                                      game['game_code'] ?? '';
-                                  _selectAction('join');
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                          'Ready to join game ${game['game_code']}'),
-                                      behavior: SnackBarBehavior.floating,
-                                      backgroundColor: Colors.green,
-                                      shape: RoundedRectangleBorder(
-                                          borderRadius: _borderRadius),
-                                    ),
-                                  );
+                                  if (_playerNameController.text
+                                      .trim()
+                                      .isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: const Text(
+                                            'Please enter your name first'),
+                                        behavior: SnackBarBehavior.floating,
+                                        backgroundColor: Colors.orange,
+                                        shape: RoundedRectangleBorder(
+                                            borderRadius: _borderRadius),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  _joinGameDirectly(game['game_code'] ?? '',
+                                      _playerNameController.text.trim());
                                 },
                               ),
                             ],
