@@ -60,11 +60,19 @@ def authenticate_user(username: str, pin: str) -> Optional[User]:
 
 def get_user(username: str) -> Optional[User]:
     """Get a user by username."""
-    return users_db.get(username)
+    print(f"DEBUG: get_user called with username: {username}")
+    print(f"DEBUG: Current users_db: {list(users_db.keys())}")
+    user = users_db.get(username)
+    print(f"DEBUG: get_user result: {user}")
+    return user
 
 def create_user(username: str, pin: str) -> User:
     """Create a new user."""
+    print(f"DEBUG: create_user called with username: {username}")
+    print(f"DEBUG: Current users_db before creation: {list(users_db.keys())}")
+    
     if username in users_db:
+        print(f"DEBUG: Username {username} already exists")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already registered"
@@ -73,6 +81,8 @@ def create_user(username: str, pin: str) -> User:
     hashed_pin = get_password_hash(pin)
     user = User(username=username, pin=hashed_pin)
     users_db[username] = user
+    print(f"DEBUG: User {username} added to users_db")
+    print(f"DEBUG: users_db after adding user: {list(users_db.keys())}")
     return user
 
 def validate_pin(pin: str) -> bool:

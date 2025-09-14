@@ -74,12 +74,20 @@ async def signup(request: SignupRequest):
     
     # Create user
     try:
+        print(f"DEBUG: Creating user with username: {request.username}")
         user = create_user(request.username, request.pin)
+        print(f"DEBUG: User created successfully: {user.username}")
+        
+        # Debug: Check if user is in database
+        from auth import users_db
+        print(f"DEBUG: Users in database after creation: {list(users_db.keys())}")
+        
     except HTTPException as e:
         raise e
     
     # Create access token
     access_token = create_access_token(data={"sub": user.username})
+    print(f"DEBUG: Token created for user: {user.username}")
     
     return TokenResponse(
         access_token=access_token,
