@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from enum import Enum
 from typing import List, Optional
+from datetime import datetime, timedelta
 
 
 class CardColor(str, Enum):
@@ -85,3 +86,36 @@ class DrawCardRequest(BaseModel):
 class ReclaimSlotRequest(BaseModel):
     original_player_id: str
     player_name: str
+
+
+# Authentication Models
+class User(BaseModel):
+    username: str
+    pin: str  # Will be hashed
+    created_at: datetime = datetime.utcnow()
+    
+    def model_dump(self, *args, **kwargs):
+        return {
+            "username": self.username,
+            "created_at": self.created_at.isoformat()
+        }
+
+
+class LoginRequest(BaseModel):
+    username: str
+    pin: str
+
+
+class SignupRequest(BaseModel):
+    username: str
+    pin: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    username: str
+
+
+class TokenData(BaseModel):
+    username: Optional[str] = None

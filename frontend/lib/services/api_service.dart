@@ -2,31 +2,43 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:html' as html;
 import '../config/app_config.dart';
+import 'auth_service.dart';
 
 class ApiService {
   static const String _apiBaseUrl = apiBaseUrl;
 
+  // Helper method to get headers with authentication
+  static Map<String, String> _getHeaders() {
+    final headers = {'Content-Type': 'application/json'};
+    headers.addAll(AuthService.getAuthHeaders());
+    return headers;
+  }
+
   // Game creation
   static Future<Map<String, dynamic>> createGame() async {
-    final response =
-        await http.post(Uri.parse('$_apiBaseUrl/api/games/create'));
+    final response = await http.post(
+      Uri.parse('$_apiBaseUrl/api/games/create'),
+      headers: _getHeaders(),
+    );
 
     if (response.statusCode == 200) {
       return json.decode(response.body);
     } else {
-      throw Exception('Failed to create game: ${response.statusCode}');
+      final errorData = json.decode(response.body);
+      throw ApiException(
+        statusCode: response.statusCode,
+        message: errorData['detail'] ?? 'Failed to create game',
+      );
     }
   }
 
   // Join game by code
-  static Future<Map<String, dynamic>> joinGameByCode(
-      String gameCode, String playerName) async {
+  static Future<Map<String, dynamic>> joinGameByCode(String gameCode) async {
     final response = await http.post(
       Uri.parse('$_apiBaseUrl/api/games/join-by-code'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _getHeaders(),
       body: json.encode({
         'game_code': gameCode,
-        'player_name': playerName,
       }),
     );
 
@@ -45,6 +57,7 @@ class ApiService {
   static Future<Map<String, dynamic>> getGameByCode(String gameCode) async {
     final response = await http.get(
       Uri.parse('$_apiBaseUrl/api/games/code/$gameCode'),
+      headers: _getHeaders(),
     );
 
     if (response.statusCode == 200) {
@@ -60,11 +73,46 @@ class ApiService {
     }
   }
 
+  // List games
+  static Future<Map<String, dynamic>> listGames() async {
+    final response = await http.get(
+      Uri.parse('$_apiBaseUrl/api/games'),
+      headers: _getHeaders(),
+    );
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    } else {
+      throw ApiException(
+        statusCode: response.statusCode,
+        message: 'Failed to list games',
+      );
+    }
+  }
+
+  // Get game state
+  static Future<Map<String, dynamic>> getGameState(String gameId) async {
+    final response = await http.get(
+      Uri.parse('$_apiBaseUrl/api/games/$gameId'),
+      headers: _getHeaders(),
+    );
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    } else {
+      throw ApiException(
+        statusCode: response.statusCode,
+        message: 'Failed to get game state',
+      );
+    }
+  }
+
   // Check player session
   static Future<Map<String, dynamic>> checkPlayerSession(
       String gameId, String playerName) async {
     final response = await http.get(
       Uri.parse('$_apiBaseUrl/api/games/$gameId/session/$playerName'),
+      headers: _getHeaders(),
     );
 
     if (response.statusCode == 200) {
@@ -82,6 +130,7 @@ class ApiService {
       String gameId, String playerName) async {
     final response = await http.get(
       Uri.parse('$_apiBaseUrl/api/games/$gameId/can-rejoin/$playerName'),
+      headers: _getHeaders(),
     );
 
     if (response.statusCode == 200) {
@@ -95,14 +144,10 @@ class ApiService {
   }
 
   // Rejoin game
-  static Future<Map<String, dynamic>> rejoinGame(
-      String gameId, String playerName) async {
+  static Future<Map<String, dynamic>> rejoinGame(String gameId) async {
     final response = await http.post(
       Uri.parse('$_apiBaseUrl/api/games/$gameId/rejoin'),
-      headers: {'Content-Type': 'application/json'},
-      body: json.encode({
-        'player_name': playerName,
-      }),
+      headers: _getHeaders(),
     );
 
     if (response.statusCode == 200) {

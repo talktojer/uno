@@ -3,12 +3,12 @@ import 'dart:async';
 import '../services/api_service.dart';
 import '../services/storage_service.dart';
 import '../services/lobby_websocket_service.dart';
+import '../services/auth_service.dart';
 import '../dialogs/join_game_dialog.dart';
 import '../dialogs/rejoin_join_choice_dialog.dart';
 import '../dialogs/invalid_game_code_dialog.dart';
 import '../dialogs/rejoin_error_dialogs.dart';
 import '../widgets/logo_section.dart';
-import '../widgets/player_name_section.dart';
 import '../widgets/main_action_selection.dart';
 import '../widgets/create_game_section.dart';
 import '../widgets/join_game_section.dart';
@@ -16,6 +16,7 @@ import '../widgets/rejoin_game_section.dart';
 import '../widgets/available_games_section.dart';
 import '../utils/home_screen_utils.dart';
 import 'game_screen.dart';
+import 'login_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final String? initialGameCode;
@@ -27,13 +28,13 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final TextEditingController _playerNameController = TextEditingController();
   final TextEditingController _gameCodeController = TextEditingController();
   final LobbyWebSocketService _lobbyService = LobbyWebSocketService();
 
   String? _gameId;
   bool _isLoading = false;
   List<Map<String, dynamic>> _availableGames = [];
+  String? _currentUsername;
 
   // UI state
   bool _showCreateGameSection = false;
@@ -48,16 +49,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _initializeHomeScreen() {
-    _loadSavedPlayerName();
+    _loadCurrentUser();
     _connectLobbyWebSocket();
     _handleInitialGameCode();
   }
 
-  void _loadSavedPlayerName() {
-    final savedName = StorageService.getSavedPlayerName();
-    if (savedName != null && savedName.isNotEmpty) {
-      _playerNameController.text = savedName;
-    }
+  void _loadCurrentUser() {
+    setState(() {
+      _currentUsername = AuthService.currentUsername;
+    });
   }
 
   void _connectLobbyWebSocket() {
@@ -86,7 +86,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
-    _playerNameController.dispose();
     _gameCodeController.dispose();
     _lobbyService.dispose();
     super.dispose();
@@ -129,12 +128,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _gameId = gameId;
       });
 
-      final existingPlayerName = ApiService.getExistingPlayerName(gameId);
-
-      if (existingPlayerName != null && _playerNameController.text.isEmpty) {
-        _playerNameController.text = existingPlayerName;
-        StorageService.savePlayerName(existingPlayerName);
-      }
+      // No need to check for existing player name since we're using authentication
 
       _showRejoinOrJoinDialog(gameCode, gameId);
     } on ApiException {
@@ -151,10 +145,8 @@ class _HomeScreenState extends State<HomeScreen> {
       barrierDismissible: false,
       builder: (context) => JoinGameDialog(
         gameCode: gameCode,
-        preFilledName: _playerNameController.text.isNotEmpty
-            ? _playerNameController.text
-            : null,
-        onJoin: (playerName) => _joinGameDirectly(gameCode, playerName),
+        preFilledName: _currentUsername,
+        onJoin: (playerName) => _joinGameDirectly(gameCode),
       ),
     );
   }
@@ -165,7 +157,7 @@ class _HomeScreenState extends State<HomeScreen> {
       barrierDismissible: false,
       builder: (context) => RejoinJoinChoiceDialog(
         gameCode: gameCode,
-        playerName: _playerNameController.text,
+        playerName: _currentUsername ?? '',
         onRejoin: () {
           Navigator.of(context).pop();
           _selectAction('rejoin');
@@ -225,9 +217,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Game action methods
   Future<void> _createGame() async {
-    if (_playerNameController.text.trim().isEmpty) {
+    if (_currentUsername == null) {
       HomeScreenUtils.showWarningSnackBar(
-          context, 'Please enter your name first');
+          context, 'Please log in first');
       return;
     }
 
@@ -244,7 +236,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _selectedAction = 'create';
       });
 
-      StorageService.savePlayerName(_playerNameController.text);
       HomeScreenUtils.showSuccessSnackBar(
           context, 'Game created: ${data['game_code']}');
     } catch (e) {
@@ -257,10 +248,15 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _joinGameByCode() async {
-    if (_gameCodeController.text.isEmpty ||
-        _playerNameController.text.isEmpty) {
+    if (_gameCodeController.text.isEmpty) {
       HomeScreenUtils.showWarningSnackBar(
-          context, 'Please enter both game code and your name');
+          context, 'Please enter a game code');
+      return;
+    }
+
+    if (_currentUsername == null) {
+      HomeScreenUtils.showWarningSnackBar(
+          context, 'Please log in first');
       return;
     }
 
@@ -269,20 +265,18 @@ class _HomeScreenState extends State<HomeScreen> {
     });
 
     try {
-      final data = await ApiService.joinGameByCode(
-          _gameCodeController.text, _playerNameController.text);
+      final data = await ApiService.joinGameByCode(_gameCodeController.text);
       setState(() {
         _gameId = data['game_id'];
       });
 
       if (data['session_token'] != null) {
         ApiService.storeSessionToken(
-            data['game_id'], _playerNameController.text, data['session_token']);
+            data['game_id'], _currentUsername!, data['session_token']);
       }
 
-      StorageService.savePlayerName(_playerNameController.text);
       _navigateToGame(
-          data['game_id'], data['player_id'], _playerNameController.text);
+          data['game_id'], data['player_id'], _currentUsername!);
     } on ApiException catch (e) {
       _handleJoinError(e);
     } finally {
@@ -292,21 +286,26 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _joinGameDirectly(String gameCode, String playerName) async {
+  Future<void> _joinGameDirectly(String gameCode) async {
+    if (_currentUsername == null) {
+      HomeScreenUtils.showWarningSnackBar(
+          context, 'Please log in first');
+      return;
+    }
+
     setState(() {
       _isLoading = true;
     });
 
     try {
-      final data = await ApiService.joinGameByCode(gameCode, playerName);
+      final data = await ApiService.joinGameByCode(gameCode);
 
       if (data['session_token'] != null) {
         ApiService.storeSessionToken(
-            data['game_id'], playerName, data['session_token']);
+            data['game_id'], _currentUsername!, data['session_token']);
       }
 
-      StorageService.savePlayerName(playerName);
-      _navigateToGame(data['game_id'], data['player_id'], playerName);
+      _navigateToGame(data['game_id'], data['player_id'], _currentUsername!);
     } on ApiException catch (e) {
       _handleJoinError(e);
     } finally {
@@ -317,8 +316,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _rejoinGame() async {
-    if (_playerNameController.text.trim().isEmpty) {
-      HomeScreenUtils.showErrorSnackBar(context, 'Please enter your name');
+    if (_currentUsername == null) {
+      HomeScreenUtils.showErrorSnackBar(context, 'Please log in first');
       return;
     }
 
@@ -337,18 +336,15 @@ class _HomeScreenState extends State<HomeScreen> {
       final gameId = gameCodeData['game_id'];
 
       final sessionData = await ApiService.checkPlayerSession(
-          gameId, _playerNameController.text.trim());
+          gameId, _currentUsername!);
 
       if (sessionData['has_session']) {
         final checkData = await ApiService.canRejoin(
-            gameId, _playerNameController.text.trim());
+            gameId, _currentUsername!);
 
         if (checkData['can_rejoin']) {
-          final data = await ApiService.rejoinGame(
-              gameId, _playerNameController.text.trim());
-          StorageService.savePlayerName(_playerNameController.text.trim());
-          _navigateToGame(
-              gameId, data['player_id'], _playerNameController.text.trim());
+          final data = await ApiService.rejoinGame(gameId);
+          _navigateToGame(gameId, data['player_id'], _currentUsername!);
         } else {
           _showRejoinNotPossibleDialog(gameId, checkData['message']);
         }
@@ -446,18 +442,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _clearSavedPlayerName() {
-    StorageService.clearPlayerName();
-    _playerNameController.clear();
-    setState(() {});
-  }
-
-  void _onPlayerNameChanged(String value) {
-    setState(() {});
-    if (value.trim().isNotEmpty) {
-      StorageService.savePlayerName(value);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -470,6 +454,33 @@ class _HomeScreenState extends State<HomeScreen> {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         elevation: 0,
         centerTitle: true,
+        actions: [
+          PopupMenuButton<String>(
+            onSelected: (value) async {
+              if (value == 'logout') {
+                await AuthService.logout();
+                if (mounted) {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(builder: (context) => const LoginScreen()),
+                  );
+                }
+              }
+            },
+            itemBuilder: (BuildContext context) => [
+              PopupMenuItem<String>(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    const Icon(Icons.logout),
+                    const SizedBox(width: 8),
+                    Text('Logout (${_currentUsername ?? 'Unknown'})'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
       body: Container(
         decoration: const BoxDecoration(
@@ -498,21 +509,30 @@ class _HomeScreenState extends State<HomeScreen> {
 
                     const SizedBox(height: 24),
 
-                    // Player Name Input (Always visible)
-                    PlayerNameSection(
-                      controller: _playerNameController,
-                      hasSavedName: StorageService.hasSavedName(),
-                      onClearName: _clearSavedPlayerName,
-                      onNameChanged: _onPlayerNameChanged,
-                    ),
+                    // Welcome message
+                    if (_currentUsername != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          'Welcome, $_currentUsername!',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
 
                     const SizedBox(height: 24),
 
                     // Main Action Selection (if no action selected)
                     if (_selectedAction == null)
                       MainActionSelection(
-                        isPlayerNameEntered:
-                            _playerNameController.text.trim().isNotEmpty,
+                        isPlayerNameEntered: _currentUsername != null,
                         onActionSelected: _selectAction,
                       ),
 
@@ -553,7 +573,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       AvailableGamesSection(
                         availableGames: _availableGames,
                         gameCodeController: _gameCodeController,
-                        playerName: _playerNameController.text,
+                        playerName: _currentUsername ?? '',
                         onActionSelected: _selectAction,
                         onJoinGameDirectly: _joinGameDirectly,
                       ),

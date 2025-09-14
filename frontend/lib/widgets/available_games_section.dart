@@ -5,7 +5,7 @@ class AvailableGamesSection extends StatelessWidget {
   final TextEditingController gameCodeController;
   final String playerName;
   final Function(String) onActionSelected;
-  final Function(String, String) onJoinGameDirectly;
+  final Function(String) onJoinGameDirectly;
 
   const AvailableGamesSection({
     super.key,
@@ -30,19 +30,7 @@ class AvailableGamesSection extends StatelessWidget {
   }
 
   void _joinGameDirectly(BuildContext context, String gameCode) {
-    if (playerName.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Please enter your name first'),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.orange,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
-      return;
-    }
-    onJoinGameDirectly(gameCode, playerName.trim());
+    onJoinGameDirectly(gameCode);
   }
 
   @override
