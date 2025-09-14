@@ -32,6 +32,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final LobbyWebSocketService _lobbyService = LobbyWebSocketService();
 
   String? _gameId;
+  String? _playerId;
   bool _isLoading = false;
   List<Map<String, dynamic>> _availableGames = [];
 
@@ -113,7 +114,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (widget.initialGameCode != null) {
         _showInvalidGameCodeDialog(gameCode);
       }
-    } on ApiException {
+    } on ApiException catch (e) {
       if (widget.initialGameCode != null) {
         _showInvalidGameCodeDialog(gameCode);
       }
@@ -124,11 +125,13 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final data = await ApiService.getGameByCode(gameCode);
       final gameId = data['game_id'];
+      final disconnectedCount = data['disconnected_players'] ?? 0;
 
       setState(() {
         _gameId = gameId;
       });
 
+      final hasExistingSession = ApiService.hasExistingSession(gameId);
       final existingPlayerName = ApiService.getExistingPlayerName(gameId);
 
       if (existingPlayerName != null && _playerNameController.text.isEmpty) {
@@ -137,7 +140,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       _showRejoinOrJoinDialog(gameCode, gameId);
-    } on ApiException {
+    } on ApiException catch (e) {
       if (widget.initialGameCode != null) {
         _showInvalidGameCodeDialog(gameCode);
       }
@@ -272,6 +275,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final data = await ApiService.joinGameByCode(
           _gameCodeController.text, _playerNameController.text);
       setState(() {
+        _playerId = data['player_id'];
         _gameId = data['game_id'];
       });
 
