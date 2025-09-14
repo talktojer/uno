@@ -14,7 +14,35 @@ ACCESS_TOKEN_EXPIRE_DAYS = 30  # 30 days
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # In-memory user storage (replace with database in production)
-users_db: dict[str, User] = {}
+# Use a global variable that persists across requests
+_users_db = None
+
+def get_users_db():
+    """Get the users database, ensuring it's initialized."""
+    global _users_db
+    if _users_db is None:
+        _users_db = {}
+        print("DEBUG: Initialized new users_db")
+    return _users_db
+
+# For backward compatibility, create a property-like access
+class UsersDB:
+    def __getitem__(self, key):
+        return get_users_db()[key]
+    
+    def __setitem__(self, key, value):
+        get_users_db()[key] = value
+    
+    def get(self, key, default=None):
+        return get_users_db().get(key, default)
+    
+    def keys(self):
+        return get_users_db().keys()
+    
+    def __contains__(self, key):
+        return key in get_users_db()
+
+users_db = UsersDB()
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
@@ -61,17 +89,19 @@ def authenticate_user(username: str, pin: str) -> Optional[User]:
 def get_user(username: str) -> Optional[User]:
     """Get a user by username."""
     print(f"DEBUG: get_user called with username: {username}")
-    print(f"DEBUG: Current users_db: {list(users_db.keys())}")
-    user = users_db.get(username)
+    db = get_users_db()
+    print(f"DEBUG: Current users_db: {list(db.keys())}")
+    user = db.get(username)
     print(f"DEBUG: get_user result: {user}")
     return user
 
 def create_user(username: str, pin: str) -> User:
     """Create a new user."""
     print(f"DEBUG: create_user called with username: {username}")
-    print(f"DEBUG: Current users_db before creation: {list(users_db.keys())}")
+    db = get_users_db()
+    print(f"DEBUG: Current users_db before creation: {list(db.keys())}")
     
-    if username in users_db:
+    if username in db:
         print(f"DEBUG: Username {username} already exists")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -80,9 +110,9 @@ def create_user(username: str, pin: str) -> User:
     
     hashed_pin = get_password_hash(pin)
     user = User(username=username, pin=hashed_pin)
-    users_db[username] = user
+    db[username] = user
     print(f"DEBUG: User {username} added to users_db")
-    print(f"DEBUG: users_db after adding user: {list(users_db.keys())}")
+    print(f"DEBUG: users_db after adding user: {list(db.keys())}")
     return user
 
 def validate_pin(pin: str) -> bool:

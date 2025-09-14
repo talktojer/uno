@@ -79,8 +79,9 @@ async def signup(request: SignupRequest):
         print(f"DEBUG: User created successfully: {user.username}")
         
         # Debug: Check if user is in database
-        from auth import users_db
-        print(f"DEBUG: Users in database after creation: {list(users_db.keys())}")
+        from auth import get_users_db
+        db = get_users_db()
+        print(f"DEBUG: Users in database after creation: {list(db.keys())}")
         
     except HTTPException as e:
         raise e
@@ -134,10 +135,11 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
 @router.get("/api/auth/debug")
 async def debug_auth():
     """Debug endpoint to check stored users."""
-    from auth import users_db
+    from auth import get_users_db
+    db = get_users_db()
     return {
-        "users": list(users_db.keys()),
-        "user_count": len(users_db)
+        "users": list(db.keys()),
+        "user_count": len(db)
     }
 
 
