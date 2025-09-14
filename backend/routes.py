@@ -13,15 +13,35 @@ security = HTTPBearer()
 # Dependency to get current user from token
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
-    token_data = verify_token(token)
-    user = get_user(username=token_data.username)
-    if user is None:
+    try:
+        print(f"DEBUG: Verifying token: {token[:20]}...")
+        token_data = verify_token(token)
+        print(f"DEBUG: Token verified, username: {token_data.username}")
+        user = get_user(username=token_data.username)
+        print(f"DEBUG: User lookup result: {user}")
+        if user is None:
+            print(f"DEBUG: User not found in database")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        print(f"DEBUG: User found: {user.username}")
+        return user
+    except ValueError as e:
+        print(f"DEBUG: Token verification failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
+            detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return user
+    except Exception as e:
+        print(f"DEBUG: Unexpected error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 @router.get("/")
@@ -100,6 +120,16 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
     return {
         "username": current_user.username,
         "created_at": current_user.created_at.isoformat()
+    }
+
+
+@router.get("/api/auth/debug")
+async def debug_auth():
+    """Debug endpoint to check stored users."""
+    from auth import users_db
+    return {
+        "users": list(users_db.keys()),
+        "user_count": len(users_db)
     }
 
 
