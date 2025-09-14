@@ -11,6 +11,7 @@ import secrets
 
 app = FastAPI(title="UNO Game Backend", version="1.0.0")
 
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
