@@ -70,7 +70,6 @@ class JoinGameRequest(BaseModel):
 
 class JoinGameByCodeRequest(BaseModel):
     game_code: str
-    player_name: str
 
 
 class PlayCardRequest(BaseModel):
