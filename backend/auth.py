@@ -1,9 +1,13 @@
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import List, Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import HTTPException, status
 from models import User, TokenData
+from sqlalchemy.orm import Session
+
+from database import SessionLocal
+from db_models import UserModel
 
 # Configuration
 SECRET_KEY = "your-secret-key-change-in-production"  # In production, use environment variable
@@ -12,37 +16,6 @@ ACCESS_TOKEN_EXPIRE_DAYS = 30  # 30 days
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# In-memory user storage (replace with database in production)
-# Use a global variable that persists across requests
-_users_db = None
-
-def get_users_db():
-    """Get the users database, ensuring it's initialized."""
-    global _users_db
-    if _users_db is None:
-        _users_db = {}
-        print("DEBUG: Initialized new users_db")
-    return _users_db
-
-# For backward compatibility, create a property-like access
-class UsersDB:
-    def __getitem__(self, key):
-        return get_users_db()[key]
-    
-    def __setitem__(self, key, value):
-        get_users_db()[key] = value
-    
-    def get(self, key, default=None):
-        return get_users_db().get(key, default)
-    
-    def keys(self):
-        return get_users_db().keys()
-    
-    def __contains__(self, key):
-        return key in get_users_db()
-
-users_db = UsersDB()
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
@@ -79,7 +52,7 @@ def verify_token(token: str) -> TokenData:
 
 def authenticate_user(username: str, pin: str) -> Optional[User]:
     """Authenticate a user with username and PIN."""
-    user = users_db.get(username)
+    user = get_user(username)
     if not user:
         return None
     if not verify_password(pin, user.pin):
@@ -88,32 +61,27 @@ def authenticate_user(username: str, pin: str) -> Optional[User]:
 
 def get_user(username: str) -> Optional[User]:
     """Get a user by username."""
-    print(f"DEBUG: get_user called with username: {username}")
-    db = get_users_db()
-    print(f"DEBUG: Current users_db: {list(db.keys())}")
-    user = db.get(username)
-    print(f"DEBUG: get_user result: {user}")
-    return user
+    with SessionLocal() as db:
+        record = db.query(UserModel).filter(UserModel.username == username).first()
+        if record:
+            return _to_user_schema(record)
+    return None
 
 def create_user(username: str, pin: str) -> User:
     """Create a new user."""
-    print(f"DEBUG: create_user called with username: {username}")
-    db = get_users_db()
-    print(f"DEBUG: Current users_db before creation: {list(db.keys())}")
-    
-    if username in db:
-        print(f"DEBUG: Username {username} already exists")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already registered"
-        )
-    
-    hashed_pin = get_password_hash(pin)
-    user = User(username=username, pin=hashed_pin)
-    db[username] = user
-    print(f"DEBUG: User {username} added to users_db")
-    print(f"DEBUG: users_db after adding user: {list(db.keys())}")
-    return user
+    with SessionLocal() as db:
+        if _username_exists(db, username):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already registered"
+            )
+
+        hashed_pin = get_password_hash(pin)
+        record = UserModel(username=username, hashed_pin=hashed_pin)
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+        return _to_user_schema(record)
 
 def validate_pin(pin: str) -> bool:
     """Validate PIN format (4 digits)."""
@@ -122,3 +90,16 @@ def validate_pin(pin: str) -> bool:
 def validate_username(username: str) -> bool:
     """Validate username format."""
     return len(username.strip()) >= 3 and len(username.strip()) <= 20
+
+def list_usernames() -> List[str]:
+    """Return all usernames for debugging purposes."""
+    with SessionLocal() as db:
+        return [user.username for user in db.query(UserModel).order_by(UserModel.username).all()]
+
+def _username_exists(db: Session, username: str) -> bool:
+    return db.query(UserModel.id).filter(UserModel.username == username).first() is not None
+
+def _to_user_schema(record: UserModel) -> User:
+    """Map a SQLAlchemy user record to the Pydantic schema."""
+    created_at = record.created_at or datetime.utcnow()
+    return User(username=record.username, pin=record.hashed_pin, created_at=created_at)

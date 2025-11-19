@@ -5,7 +5,7 @@ import secrets
 from models import JoinGameRequest, JoinGameByCodeRequest, PlayCardRequest, DrawCardRequest, ReclaimSlotRequest, LoginRequest, SignupRequest, TokenResponse
 from game_logic import UNOGame
 from utils import games, games_by_code, active_connections, player_identities, disconnected_players, player_sessions, broadcast_game_list_update, broadcast_game_state
-from auth import authenticate_user, create_user, create_access_token, verify_token, get_user, validate_pin, validate_username
+from auth import authenticate_user, create_user, create_access_token, verify_token, get_user, validate_pin, validate_username, list_usernames
 
 router = APIRouter()
 security = HTTPBearer()
@@ -77,12 +77,7 @@ async def signup(request: SignupRequest):
         print(f"DEBUG: Creating user with username: {request.username}")
         user = create_user(request.username, request.pin)
         print(f"DEBUG: User created successfully: {user.username}")
-        
-        # Debug: Check if user is in database
-        from auth import get_users_db
-        db = get_users_db()
-        print(f"DEBUG: Users in database after creation: {list(db.keys())}")
-        
+        print(f"DEBUG: Users in database after creation: {list_usernames()}")
     except HTTPException as e:
         raise e
     
@@ -135,11 +130,10 @@ async def get_current_user_info(current_user: dict = Depends(get_current_user)):
 @router.get("/api/auth/debug")
 async def debug_auth():
     """Debug endpoint to check stored users."""
-    from auth import get_users_db
-    db = get_users_db()
+    users = list_usernames()
     return {
-        "users": list(db.keys()),
-        "user_count": len(db)
+        "users": users,
+        "user_count": len(users)
     }
 
 

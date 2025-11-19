@@ -2,6 +2,10 @@ from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from routes import router
 from websocket_handler import lobby_websocket_endpoint, game_websocket_endpoint
+from database import Base, engine
+
+# Ensure database tables are created at startup
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="UNO Game Backend", version="1.0.0")
 
