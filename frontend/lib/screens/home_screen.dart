@@ -540,6 +540,34 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _rejoinGameFromList(String gameCode, String gameId) async {
+    if (_currentUsername == null) {
+      HomeScreenUtils.showWarningSnackBar(context, 'Please log in first');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final data = await ApiService.joinGameByCode(gameCode);
+      
+      if (data['session_token'] != null) {
+        ApiService.storeSessionToken(
+            data['game_id'], _currentUsername!, data['session_token']);
+      }
+
+      _navigateToGame(data['game_id'], data['player_id'], _currentUsername!);
+    } on ApiException catch (e) {
+      HomeScreenUtils.showErrorSnackBar(context, 'Error rejoining game: ${e.message}');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -766,6 +794,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         onActionSelected: _selectAction,
                         onJoinGameDirectly: _joinGameDirectly,
                         onDeleteGame: _deleteGame,
+                        onRejoinGame: _rejoinGameFromList,
                       ),
                     ],
                   ],

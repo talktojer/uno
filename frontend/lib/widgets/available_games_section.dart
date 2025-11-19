@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:html' as html;
 
 class AvailableGamesSection extends StatelessWidget {
   final List<Map<String, dynamic>> availableGames;
@@ -7,6 +8,7 @@ class AvailableGamesSection extends StatelessWidget {
   final Function(String) onActionSelected;
   final Function(String) onJoinGameDirectly;
   final Function(String) onDeleteGame;
+  final Function(String, String)? onRejoinGame;
 
   const AvailableGamesSection({
     super.key,
@@ -16,6 +18,7 @@ class AvailableGamesSection extends StatelessWidget {
     required this.onActionSelected,
     required this.onJoinGameDirectly,
     required this.onDeleteGame,
+    this.onRejoinGame,
   });
 
   void _copyGameCode(BuildContext context, String gameCode) {
@@ -33,6 +36,36 @@ class AvailableGamesSection extends StatelessWidget {
 
   void _joinGameDirectly(BuildContext context, String gameCode) {
     onJoinGameDirectly(gameCode);
+  }
+
+  bool _isUserInGame(String gameId, String playerName) {
+    try {
+      final keys = html.window.localStorage.keys;
+      for (final key in keys) {
+        if (key.startsWith('uno_session_')) {
+          final parts = key.split('_');
+          if (parts.length >= 4) {
+            final storedGameId = parts[2];
+            final storedPlayerName = parts.sublist(3).join('_');
+            if (storedGameId == gameId && storedPlayerName == playerName) {
+              return true;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('Error checking if user is in game: $e');
+    }
+    return false;
+  }
+
+  void _rejoinGame(BuildContext context, String gameCode, String gameId) {
+    if (onRejoinGame != null) {
+      onRejoinGame!(gameCode, gameId);
+    } else {
+      // Fallback to join directly
+      onJoinGameDirectly(gameCode);
+    }
   }
 
   Future<void> _confirmAndDeleteGame(
@@ -136,22 +169,41 @@ class AvailableGamesSection extends StatelessWidget {
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        // Show rejoin button if user is in the game and it's in progress
+                        if ((game['status'] == 'in_progress' ||
+                                game['status'] == 'waiting_for_rejoin' ||
+                                game['status'] == 'full') &&
+                            game['game_id'] != null &&
+                            _isUserInGame(game['game_id'], playerName)) ...[
+                          IconButton(
+                            icon: const Icon(Icons.replay, color: Colors.orange),
+                            tooltip: 'Rejoin Game',
+                            onPressed: () => _rejoinGame(
+                                context,
+                                game['game_code'] ?? '',
+                                game['game_id'] ?? ''),
+                          ),
+                        ],
+                        // Show join/copy buttons for waiting games
                         if (game['status'] == 'waiting' ||
                             game['status'] == 'waiting_for_replacement') ...[
                           IconButton(
                             icon: const Icon(Icons.copy, color: Colors.blue),
+                            tooltip: 'Copy Game Code',
                             onPressed: () => _copyGameCode(
                                 context, game['game_code'] ?? ''),
                           ),
                           IconButton(
                             icon: const Icon(Icons.play_arrow,
                                 color: Colors.green),
+                            tooltip: 'Join Game',
                             onPressed: () => _joinGameDirectly(
                                 context, game['game_code'] ?? ''),
                           ),
                         ],
                         IconButton(
                           icon: const Icon(Icons.delete, color: Colors.red),
+                          tooltip: 'Delete Game',
                           onPressed: () => _confirmAndDeleteGame(
                               context,
                               game['game_id'] ?? '',
