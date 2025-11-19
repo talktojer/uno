@@ -170,19 +170,34 @@ async def create_game(current_user: dict = Depends(get_current_user), db: Sessio
 async def list_games(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """List all available games"""
     available_games = []
-    for game_id, game in games.items():
+    
+    # Get all games from database
+    from game_storage import list_games_from_db
+    db_games = list_games_from_db(db)
+    
+    # Process each game (load into cache if not already there)
+    for db_game in db_games:
         # Skip ended games
-        if game.game_ended:
+        if db_game.game_state_json:
+            import json
+            state_dict = json.loads(db_game.game_state_json)
+            if state_dict.get("game_ended", False):
+                continue
+        
+        # Load game into cache if not already there
+        game = get_game(db, db_game.id)
+        if not game:
             continue
             
         available_games.append({
-            "game_id": game_id,
+            "game_id": game.game_id,
             "game_code": game.game_code,
             "player_count": len(game.players),
             "max_players": 2,
             "game_started": game.game_started,
             "status": "full" if len(game.players) >= 2 else "waiting" if not game.game_started else "in_progress"
         })
+    
     return {"games": available_games}
 
 

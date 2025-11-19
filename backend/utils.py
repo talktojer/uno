@@ -96,39 +96,61 @@ async def broadcast_game_state(game_id: str, additional_data: dict = None):
 
 async def send_game_list_to_player(websocket: WebSocket):
     """Send current game list to a specific player"""
+    from database import SessionLocal
+    from game_storage import list_games_from_db
+    
     available_games = []
-    for game_id, game in games.items():
-        # Count active (connected) players
-        active_players = sum(1 for p in game.players if p.id in active_connections)
+    db = SessionLocal()
+    try:
+        # Get all games from database
+        db_games = list_games_from_db(db)
         
-        # Check for disconnected players
-        disconnected_count = 0
-        if game_id in disconnected_players:
-            disconnected_count = len(disconnected_players[game_id])
-        
-        # Determine game status
-        if len(game.players) >= 2 and active_players >= 2:
-            status = "full"
-        elif game.game_started and active_players < 2:
-            if disconnected_count > 0:
-                status = "waiting_for_rejoin"
+        # Process each game (load into cache if not already there)
+        for db_game in db_games:
+            # Skip ended games
+            if db_game.game_state_json:
+                state_dict = json.loads(db_game.game_state_json)
+                if state_dict.get("game_ended", False):
+                    continue
+            
+            # Load game into cache if not already there
+            game = get_game(db, db_game.id)
+            if not game:
+                continue
+            
+            # Count active (connected) players
+            active_players = sum(1 for p in game.players if p.id in active_connections)
+            
+            # Check for disconnected players
+            disconnected_count = 0
+            if game.game_id in disconnected_players:
+                disconnected_count = len(disconnected_players[game.game_id])
+            
+            # Determine game status
+            if len(game.players) >= 2 and active_players >= 2:
+                status = "full"
+            elif game.game_started and active_players < 2:
+                if disconnected_count > 0:
+                    status = "waiting_for_rejoin"
+                else:
+                    status = "waiting_for_replacement"
+            elif not game.game_started:
+                status = "waiting"
             else:
-                status = "waiting_for_replacement"
-        elif not game.game_started:
-            status = "waiting"
-        else:
-            status = "in_progress"
-        
-        available_games.append({
-            "game_id": game_id,
-            "game_code": game.game_code,
-            "player_count": len(game.players),
-            "active_players": active_players,
-            "disconnected_players": disconnected_count,
-            "max_players": 2,
-            "game_started": game.game_started,
-            "status": status
-        })
+                status = "in_progress"
+            
+            available_games.append({
+                "game_id": game.game_id,
+                "game_code": game.game_code,
+                "player_count": len(game.players),
+                "active_players": active_players,
+                "disconnected_players": disconnected_count,
+                "max_players": 2,
+                "game_started": game.game_started,
+                "status": status
+            })
+    finally:
+        db.close()
     
     message = {
         "type": "game_list_update",
@@ -143,39 +165,61 @@ async def send_game_list_to_player(websocket: WebSocket):
 
 async def broadcast_game_list_update():
     """Broadcast updated game list to all connected players"""
+    from database import SessionLocal
+    from game_storage import list_games_from_db
+    
     available_games = []
-    for game_id, game in games.items():
-        # Count active (connected) players
-        active_players = sum(1 for p in game.players if p.id in active_connections)
+    db = SessionLocal()
+    try:
+        # Get all games from database
+        db_games = list_games_from_db(db)
         
-        # Check for disconnected players
-        disconnected_count = 0
-        if game_id in disconnected_players:
-            disconnected_count = len(disconnected_players[game_id])
-        
-        # Determine game status
-        if len(game.players) >= 2 and active_players >= 2:
-            status = "full"
-        elif game.game_started and active_players < 2:
-            if disconnected_count > 0:
-                status = "waiting_for_rejoin"
+        # Process each game (load into cache if not already there)
+        for db_game in db_games:
+            # Skip ended games
+            if db_game.game_state_json:
+                state_dict = json.loads(db_game.game_state_json)
+                if state_dict.get("game_ended", False):
+                    continue
+            
+            # Load game into cache if not already there
+            game = get_game(db, db_game.id)
+            if not game:
+                continue
+            
+            # Count active (connected) players
+            active_players = sum(1 for p in game.players if p.id in active_connections)
+            
+            # Check for disconnected players
+            disconnected_count = 0
+            if game.game_id in disconnected_players:
+                disconnected_count = len(disconnected_players[game.game_id])
+            
+            # Determine game status
+            if len(game.players) >= 2 and active_players >= 2:
+                status = "full"
+            elif game.game_started and active_players < 2:
+                if disconnected_count > 0:
+                    status = "waiting_for_rejoin"
+                else:
+                    status = "waiting_for_replacement"
+            elif not game.game_started:
+                status = "waiting"
             else:
-                status = "waiting_for_replacement"
-        elif not game.game_started:
-            status = "waiting"
-        else:
-            status = "in_progress"
-        
-        available_games.append({
-            "game_id": game_id,
-            "game_code": game.game_code,
-            "player_count": len(game.players),
-            "active_players": active_players,
-            "disconnected_players": disconnected_count,
-            "max_players": 2,
-            "game_started": game.game_started,
-            "status": status
-        })
+                status = "in_progress"
+            
+            available_games.append({
+                "game_id": game.game_id,
+                "game_code": game.game_code,
+                "player_count": len(game.players),
+                "active_players": active_players,
+                "disconnected_players": disconnected_count,
+                "max_players": 2,
+                "game_started": game.game_started,
+                "status": status
+            })
+    finally:
+        db.close()
     
     message = {
         "type": "game_list_update",
