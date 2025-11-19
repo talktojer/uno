@@ -14,6 +14,8 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin {
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _pinController = TextEditingController();
+  final FocusNode _usernameFocusNode = FocusNode();
+  final FocusNode _pinFocusNode = FocusNode();
   
   bool _isLoading = false;
   bool _obscurePin = true;
@@ -28,6 +30,28 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   void initState() {
     super.initState();
     _setupAnimations();
+    _loadLastUsername();
+    _setupPinAutoSubmit();
+  }
+
+  Future<void> _loadLastUsername() async {
+    final lastUsername = await AuthService.getLastUsername();
+    if (lastUsername != null && mounted) {
+      _usernameController.text = lastUsername;
+    }
+  }
+
+  void _setupPinAutoSubmit() {
+    _pinController.addListener(() {
+      if (_pinController.text.length == 4 && !_isLoading) {
+        // Auto-submit when PIN is complete
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (mounted && _pinController.text.length == 4) {
+            _login();
+          }
+        });
+      }
+    });
   }
 
   void _setupAnimations() {
@@ -56,6 +80,8 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   void dispose() {
     _usernameController.dispose();
     _pinController.dispose();
+    _usernameFocusNode.dispose();
+    _pinFocusNode.dispose();
     _fadeController.dispose();
     _slideController.dispose();
     super.dispose();
@@ -89,7 +115,20 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
       }
     } else {
       setState(() {
-        _errorMessage = result.error ?? 'Login failed';
+        String error = result.error ?? 'Login failed';
+        // Provide more user-friendly error messages
+        if (error.contains('Invalid') || error.contains('incorrect')) {
+          _errorMessage = 'Invalid username or PIN. Please try again.';
+        } else if (error.contains('not found') || error.contains('does not exist')) {
+          _errorMessage = 'Username not found. Please check your username or sign up.';
+        } else if (error.contains('Network')) {
+          _errorMessage = 'Connection error. Please check your internet and try again.';
+        } else {
+          _errorMessage = error;
+        }
+        // Focus on PIN field for retry
+        _pinFocusNode.requestFocus();
+        _pinController.clear();
       });
     }
 
@@ -99,31 +138,38 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
   }
 
   bool _validateInputs() {
-    if (_usernameController.text.trim().isEmpty) {
+    final username = _usernameController.text.trim();
+    final pin = _pinController.text;
+
+    if (username.isEmpty) {
       setState(() {
         _errorMessage = 'Please enter your username';
       });
+      _usernameFocusNode.requestFocus();
       return false;
     }
 
-    if (!AuthService.isValidUsername(_usernameController.text.trim())) {
+    if (!AuthService.isValidUsername(username)) {
       setState(() {
         _errorMessage = 'Username must be 3-20 characters long';
       });
+      _usernameFocusNode.requestFocus();
       return false;
     }
 
-    if (_pinController.text.isEmpty) {
+    if (pin.isEmpty) {
       setState(() {
-        _errorMessage = 'Please enter your PIN';
+        _errorMessage = 'Please enter your 4-digit PIN';
       });
+      _pinFocusNode.requestFocus();
       return false;
     }
 
-    if (!AuthService.isValidPin(_pinController.text)) {
+    if (!AuthService.isValidPin(pin)) {
       setState(() {
         _errorMessage = 'PIN must be exactly 4 digits';
       });
+      _pinFocusNode.requestFocus();
       return false;
     }
 
@@ -307,6 +353,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
           ),
           child: TextField(
             controller: _usernameController,
+            focusNode: _usernameFocusNode,
             decoration: const InputDecoration(
               hintText: 'Enter your username',
               border: InputBorder.none,
@@ -314,10 +361,15 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
               hintStyle: TextStyle(color: Color(0xFFa0aec0)),
             ),
             style: const TextStyle(fontSize: 16),
+            textInputAction: TextInputAction.next,
             onChanged: (value) {
               setState(() {
                 _errorMessage = '';
               });
+            },
+            onSubmitted: (value) {
+              // Move to PIN field when username is submitted
+              _pinFocusNode.requestFocus();
             },
           ),
         ),
@@ -346,6 +398,7 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
           ),
           child: TextField(
             controller: _pinController,
+            focusNode: _pinFocusNode,
             obscureText: _obscurePin,
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
@@ -367,10 +420,16 @@ class _LoginScreenState extends State<LoginScreen> with TickerProviderStateMixin
               ),
             ),
             style: const TextStyle(fontSize: 16, letterSpacing: 2),
+            textInputAction: TextInputAction.done,
             onChanged: (value) {
               setState(() {
                 _errorMessage = '';
               });
+            },
+            onSubmitted: (value) {
+              if (value.length == 4) {
+                _login();
+              }
             },
           ),
         ),

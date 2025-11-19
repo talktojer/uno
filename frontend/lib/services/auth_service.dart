@@ -5,18 +5,51 @@ import 'package:shared_preferences/shared_preferences.dart';
 class AuthService {
   static const String _tokenKey = 'auth_token';
   static const String _usernameKey = 'username';
-  
+  static const String _lastUsernameKey =
+      'last_username'; // For remembering username
+
   static String? _currentToken;
   static String? _currentUsername;
+  static bool _isTokenValidated = false;
 
   // Get current token
   static String? get currentToken => _currentToken;
   static String? get currentUsername => _currentUsername;
-  static bool get isLoggedIn => _currentToken != null && _currentUsername != null;
+  static bool get isLoggedIn =>
+      _currentToken != null && _currentUsername != null && _isTokenValidated;
 
-  // Initialize auth service
+  // Initialize auth service with token validation
   static Future<void> initialize() async {
     await _loadStoredCredentials();
+    if (_currentToken != null) {
+      // Validate token on startup
+      await _validateToken();
+    }
+  }
+
+  // Validate stored token
+  static Future<bool> _validateToken() async {
+    if (_currentToken == null) {
+      _isTokenValidated = false;
+      return false;
+    }
+
+    try {
+      final userInfo = await getCurrentUser();
+      if (userInfo != null) {
+        _isTokenValidated = true;
+        return true;
+      } else {
+        // Token is invalid, clear it
+        await clearCredentials();
+        _isTokenValidated = false;
+        return false;
+      }
+    } catch (e) {
+      // Network error - assume token is still valid for now
+      _isTokenValidated = true;
+      return true;
+    }
   }
 
   // Load stored credentials from SharedPreferences
@@ -24,6 +57,18 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     _currentToken = prefs.getString(_tokenKey);
     _currentUsername = prefs.getString(_usernameKey);
+  }
+
+  // Get last used username (for pre-filling login form)
+  static Future<String?> getLastUsername() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_lastUsernameKey);
+  }
+
+  // Save last used username
+  static Future<void> _saveLastUsername(String username) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastUsernameKey, username);
   }
 
   // Store credentials
@@ -42,6 +87,7 @@ class AuthService {
     await prefs.remove(_usernameKey);
     _currentToken = null;
     _currentUsername = null;
+    _isTokenValidated = false;
   }
 
   // Sign up
@@ -61,6 +107,8 @@ class AuthService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         await _storeCredentials(data['access_token'], data['username']);
+        await _saveLastUsername(data['username']);
+        _isTokenValidated = true;
         return AuthResult.success(data['username']);
       } else {
         final error = jsonDecode(response.body);
@@ -88,6 +136,8 @@ class AuthService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         await _storeCredentials(data['access_token'], data['username']);
+        await _saveLastUsername(data['username']);
+        _isTokenValidated = true;
         return AuthResult.success(data['username']);
       } else {
         final error = jsonDecode(response.body);
@@ -119,10 +169,12 @@ class AuthService {
       } else if (response.statusCode == 401) {
         // Token expired or invalid
         await clearCredentials();
+        _isTokenValidated = false;
         return null;
       }
     } catch (e) {
-      // Network error, keep current credentials
+      // Network error, keep current credentials but mark as unvalidated
+      _isTokenValidated = false;
     }
     return null;
   }
