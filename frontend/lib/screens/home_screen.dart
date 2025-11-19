@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:html' as html;
 import '../services/api_service.dart';
 import '../services/storage_service.dart';
 import '../services/lobby_websocket_service.dart';
@@ -36,6 +37,12 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>> _availableGames = [];
   String? _currentUsername;
 
+  // Active game state
+  String? _activeGameId;
+  String? _activeGameCode;
+  String? _activePlayerId;
+  bool _isCheckingActiveGame = false;
+
   // UI state
   bool _showCreateGameSection = false;
   bool _showJoinGameSection = false;
@@ -52,6 +59,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadCurrentUser();
     _connectLobbyWebSocket();
     _handleInitialGameCode();
+    _checkForActiveGames();
   }
 
   void _loadCurrentUser() {
@@ -406,6 +414,132 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // Active game detection
+  Future<void> _checkForActiveGames() async {
+    if (_currentUsername == null) {
+      // Wait a bit for username to load
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (_currentUsername == null) return;
+    }
+
+    setState(() {
+      _isCheckingActiveGame = true;
+    });
+
+    try {
+      // Scan localStorage for session tokens
+      final keys = html.window.localStorage.keys;
+      for (final key in keys) {
+        if (key.startsWith('uno_session_')) {
+          // Extract gameId and playerName from key format: uno_session_{gameId}_{playerName}
+          final parts = key.split('_');
+          if (parts.length >= 4) {
+            final gameId = parts[2];
+            final playerName = parts.sublist(3).join('_');
+            
+            // Only check games for the current user
+            if (playerName == _currentUsername) {
+              try {
+                // Check if user has an active slot in this game
+                final slotData = await ApiService.getMySlot(gameId);
+                
+                if (slotData['has_slot'] == true) {
+                  // Get game state to check if game is in progress
+                  try {
+                    final gameState = await ApiService.getGameState(gameId);
+                    
+                    // Only show rejoin button if game has started and is not over
+                    if (gameState['game_started'] == true && gameState['winner'] == null) {
+                      // Get game code
+                      final gameCode = gameState['game_code'];
+                      
+                      setState(() {
+                        _activeGameId = gameId;
+                        _activeGameCode = gameCode;
+                        _activePlayerId = slotData['player_id'];
+                        _isCheckingActiveGame = false;
+                      });
+                      return; // Found an active game, stop searching
+                    }
+                  } catch (e) {
+                    // Game might not exist or user doesn't have access
+                    continue;
+                  }
+                }
+              } catch (e) {
+                // Slot check failed, continue to next game
+                continue;
+              }
+            }
+          }
+        }
+      }
+      
+      // No active game found
+      setState(() {
+        _activeGameId = null;
+        _activeGameCode = null;
+        _activePlayerId = null;
+        _isCheckingActiveGame = false;
+      });
+    } catch (e) {
+      print('Error checking for active games: $e');
+      setState(() {
+        _isCheckingActiveGame = false;
+      });
+    }
+  }
+
+  Future<void> _rejoinActiveGame() async {
+    if (_activeGameId == null || _activePlayerId == null || _currentUsername == null) {
+      HomeScreenUtils.showErrorSnackBar(context, 'Unable to rejoin game');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // Use the existing join endpoint which will automatically rejoin if user owns a slot
+      if (_activeGameCode != null) {
+        final data = await ApiService.joinGameByCode(_activeGameCode!);
+        
+        if (data['session_token'] != null) {
+          ApiService.storeSessionToken(
+              data['game_id'], _currentUsername!, data['session_token']);
+        }
+
+        _navigateToGame(data['game_id'], data['player_id'], _currentUsername!);
+      } else {
+        // Fallback: try to get game code from game state
+        final gameState = await ApiService.getGameState(_activeGameId!);
+        final gameCode = gameState['game_code'];
+        
+        final data = await ApiService.joinGameByCode(gameCode);
+        
+        if (data['session_token'] != null) {
+          ApiService.storeSessionToken(
+              data['game_id'], _currentUsername!, data['session_token']);
+        }
+
+        _navigateToGame(data['game_id'], data['player_id'], _currentUsername!);
+      }
+    } on ApiException catch (e) {
+      HomeScreenUtils.showErrorSnackBar(context, 'Error rejoining game: ${e.message}');
+      // Clear active game state if rejoin failed
+      setState(() {
+        _activeGameId = null;
+        _activeGameCode = null;
+        _activePlayerId = null;
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -492,6 +626,97 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
 
                     const SizedBox(height: 24),
+
+                    // Active Game Rejoin Button (if user has an active game)
+                    if (_activeGameId != null && _selectedAction == null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 8,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.replay, color: Colors.orange),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    'Game in Progress',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.grey[800],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'You have an active game. Rejoin to continue playing.',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                            if (_activeGameCode != null) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                'Game Code: ${_activeGameCode}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[500],
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                onPressed: _isLoading ? null : _rejoinActiveGame,
+                                icon: _isLoading
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                        ),
+                                      )
+                                    : const Icon(Icons.replay, size: 24),
+                                label: Text(
+                                  _isLoading ? 'Rejoining...' : 'Rejoin Game',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.orange,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 16),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  elevation: 4,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
 
                     // Main Action Selection (if no action selected)
                     if (_selectedAction == null)

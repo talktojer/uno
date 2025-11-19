@@ -88,49 +88,11 @@ class MainActionSelection extends StatelessWidget {
 
           const SizedBox(height: 16),
 
-          // Rejoin Game Button
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed:
-                  isPlayerNameEntered ? () => onActionSelected('rejoin') : null,
-              icon: const Icon(Icons.replay, size: 24),
-              label: const Text(
-                'Rejoin Game (Restore Progress)',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 4,
-              ),
-            ),
-          ),
-
-          const SizedBox(height: 8),
-
-          // Small info text about rejoin
-          Text(
-            'Use this if you got disconnected and want to continue your game with the same cards and progress',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey[600],
-              fontStyle: FontStyle.italic,
-            ),
-            textAlign: TextAlign.center,
-          ),
-
-          const SizedBox(height: 16),
-
           // Divider and explanation
           Divider(color: Colors.grey[300]),
           const SizedBox(height: 8),
           Text(
-            'Not sure? Use "Join Existing Game" if you\'re new to the game, or "Rejoin Game" if you were playing before.',
+            'Not sure? Use "Join Existing Game" to join a game with a code.',
             style: TextStyle(
               fontSize: 11,
               color: Colors.grey[500],
