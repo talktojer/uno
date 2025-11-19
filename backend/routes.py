@@ -323,7 +323,7 @@ async def join_game(game_id: str, current_user: dict = Depends(get_current_user)
     session_token = secrets.token_urlsafe(32)
     if game_id not in player_sessions:
         player_sessions[game_id] = {}
-    player_sessions[game_id][current_user.username] = session_token
+    player_sessions[game_id][player_id] = session_token
     
     # Save game state to database
     save_game(db, game_id)
@@ -432,7 +432,7 @@ async def join_game_by_code(request: JoinGameByCodeRequest, current_user: dict =
     session_token = secrets.token_urlsafe(32)
     if game_id not in player_sessions:
         player_sessions[game_id] = {}
-    player_sessions[game_id][player_name] = session_token
+    player_sessions[game_id][player_id] = session_token
     
     # Save game state to database
     save_game(db, game_id)
@@ -453,59 +453,50 @@ async def join_game_by_code(request: JoinGameByCodeRequest, current_user: dict =
     }
 
 
-@router.get("/api/games/{game_id}/can-rejoin/{player_name}")
-async def can_rejoin_game(game_id: str, player_name: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Check if a player can rejoin a game by name"""
+@router.get("/api/games/{game_id}/can-rejoin/{player_id}")
+async def can_rejoin_game(game_id: str, player_id: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Check if a player can rejoin a game by player_id"""
     game = get_game(db, game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     
-    # Check if there's a disconnected player with this name
-    if game_id in disconnected_players:
-        for player_id, player in disconnected_players[game_id].items():
-            if player.name == player_name:
-                # Check if their slot is available
-                for i, current_player in enumerate(game.players):
-                    if current_player.id == player_id and current_player.id not in active_connections:
-                        return {
-                            "can_rejoin": True,
-                            "player_id": player_id,
-                            "slot_index": i,
-                            "message": f"Found disconnected player '{player_name}' with available slot"
-                        }
+    # Check if there's a disconnected player with this player_id
+    if game_id in disconnected_players and player_id in disconnected_players[game_id]:
+        player = disconnected_players[game_id][player_id]
+        # Check if their slot is available
+        for i, current_player in enumerate(game.players):
+            if current_player.id == player_id and current_player.id not in active_connections:
+                return {
+                    "can_rejoin": True,
+                    "player_id": player_id,
+                    "slot_index": i,
+                    "message": f"Found disconnected player '{player.name}' with available slot"
+                }
     
-    return {"can_rejoin": False, "message": "No disconnected player found with this name or slot not available"}
+    return {"can_rejoin": False, "message": "No disconnected player found with this player_id or slot not available"}
 
 
-@router.post("/api/games/{game_id}/rejoin")
-async def rejoin_game(game_id: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Rejoin a game by player name (for disconnected players)"""
+@router.post("/api/games/{game_id}/rejoin/{player_id}")
+async def rejoin_game(game_id: str, player_id: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Rejoin a game by player_id (for disconnected players)"""
     game = get_game(db, game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
-    player_name = current_user.username
     
-    # Check if there's a disconnected player with this name
+    # Check if there's a disconnected player with this player_id
     if game_id not in disconnected_players:
         raise HTTPException(status_code=400, detail="No disconnected players found in this game")
     
-    # Find the disconnected player
-    disconnected_player_id = None
-    disconnected_player = None
-    for player_id, player in disconnected_players[game_id].items():
-        if player.name == player_name:
-            disconnected_player_id = player_id
-            disconnected_player = player
-            break
+    if player_id not in disconnected_players[game_id]:
+        raise HTTPException(status_code=400, detail=f"No disconnected player found with player_id '{player_id}'")
     
-    if not disconnected_player:
-        raise HTTPException(status_code=400, detail=f"No disconnected player found with name '{player_name}'")
+    disconnected_player = disconnected_players[game_id][player_id]
     
     # Check if their slot is available
     slot_available = False
     slot_index = None
     for i, current_player in enumerate(game.players):
-        if current_player.id == disconnected_player_id and current_player.id not in active_connections:
+        if current_player.id == player_id and current_player.id not in active_connections:
             slot_available = True
             slot_index = i
             break
@@ -517,7 +508,7 @@ async def rejoin_game(game_id: str, current_user: dict = Depends(get_current_use
     game.players[slot_index] = disconnected_player
     
     # Remove from disconnected players
-    del disconnected_players[game_id][disconnected_player_id]
+    del disconnected_players[game_id][player_id]
     
     # Save game state to database
     save_game(db, game_id)
@@ -525,7 +516,7 @@ async def rejoin_game(game_id: str, current_user: dict = Depends(get_current_use
     # Broadcast the reconnection
     await broadcast_game_state(game_id, {
         "type": "player_rejoined",
-        "message": f"{player_name} reconnected to the game",
+        "message": f"{disconnected_player.name} reconnected to the game",
         "rejoined_player": disconnected_player.model_dump()
     })
     
@@ -533,14 +524,14 @@ async def rejoin_game(game_id: str, current_user: dict = Depends(get_current_use
     await broadcast_game_list_update()
     
     return {
-        "player_id": disconnected_player_id, 
-        "message": f"Successfully reconnected {player_name} to their original slot"
+        "player_id": player_id, 
+        "message": f"Successfully reconnected {disconnected_player.name} to their original slot"
     }
 
 
-@router.get("/api/games/{game_id}/session/{player_name}")
-async def check_player_session(game_id: str, player_name: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Check if a player has an active session in this game"""
+@router.get("/api/games/{game_id}/session/{player_id}")
+async def check_player_session(game_id: str, player_id: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Check if a player has an active session in this game by player_id"""
     game = get_game(db, game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
@@ -550,23 +541,20 @@ async def check_player_session(game_id: str, player_name: str, current_user: dic
     can_rejoin = False
     message = "No active session found"
     
-    if game_id in player_sessions and player_name in player_sessions[game_id]:
+    if game_id in player_sessions and player_id in player_sessions[game_id]:
         has_session = True
         
         # Check if they can rejoin (either disconnected or active)
-        if game_id in disconnected_players:
-            for player_id, player in disconnected_players[game_id].items():
-                if player.name == player_name:
-                    can_rejoin = True
-                    message = f"Found active session for '{player_name}' - can rejoin"
-                    break
-        
-        if not can_rejoin:
+        if game_id in disconnected_players and player_id in disconnected_players[game_id]:
+            can_rejoin = True
+            player = disconnected_players[game_id][player_id]
+            message = f"Found active session for '{player.name}' - can rejoin"
+        elif player_id in active_connections:
             # Check if they're currently active in the game
             for player in game.players:
-                if player.name == player_name and player.id in active_connections:
+                if player.id == player_id:
                     can_rejoin = True
-                    message = f"Found active session for '{player_name}' - already connected"
+                    message = f"Found active session for '{player.name}' - already connected"
                     break
     
     return {

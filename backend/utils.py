@@ -15,7 +15,7 @@ player_identities: Dict[str, Dict[str, str]] = {}  # game_id -> {player_id -> or
 # Track disconnected players for proper restoration
 disconnected_players: Dict[str, Dict[str, Player]] = {}  # game_id -> {player_id -> Player}
 # Track player sessions for rejoining
-player_sessions: Dict[str, Dict[str, str]] = {}  # game_id -> {player_name -> session_token}
+player_sessions: Dict[str, Dict[str, str]] = {}  # game_id -> {player_id -> session_token}
 
 
 def get_game(db: Session, game_id: str) -> Optional['UNOGame']:
