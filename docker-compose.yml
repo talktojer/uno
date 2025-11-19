@@ -31,6 +31,9 @@ services:
       - /app/.dart_tool
     environment:
       - FLUTTER_ROOT=/flutter
+      - API_BASE_URL=https://uno-api.jersweb.net
+      - WS_BASE_URL=wss://uno-api.jersweb.net
+      - BASE_URL=https://uno.jersweb.net
     networks:
       - app-network
     depends_on:

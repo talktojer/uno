@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/app_config.dart';
 
 class AuthService {
   static const String _tokenKey = 'auth_token';
@@ -94,7 +95,7 @@ class AuthService {
   static Future<AuthResult> signUp(String username, String pin) async {
     try {
       final response = await http.post(
-        Uri.parse('http://localhost:8000/api/auth/signup'),
+        Uri.parse('$apiBaseUrl/api/auth/signup'),
         headers: {
           'Content-Type': 'application/json',
         },
@@ -123,7 +124,7 @@ class AuthService {
   static Future<AuthResult> login(String username, String pin) async {
     try {
       final response = await http.post(
-        Uri.parse('http://localhost:8000/api/auth/login'),
+        Uri.parse('$apiBaseUrl/api/auth/login'),
         headers: {
           'Content-Type': 'application/json',
         },
@@ -154,7 +155,7 @@ class AuthService {
 
     try {
       final response = await http.get(
-        Uri.parse('http://localhost:8000/api/auth/me'),
+        Uri.parse('$apiBaseUrl/api/auth/me'),
         headers: {
           'Authorization': 'Bearer $_currentToken',
         },

@@ -3,13 +3,11 @@ import 'dart:convert';
 import '../config/app_config.dart';
 
 class GameApiService {
-  static const String _apiBaseUrl = apiBaseUrl;
-
   // Fetch game state fallback
   static Future<Map<String, dynamic>?> fetchGameState(String gameId) async {
     try {
       final response = await http.get(
-        Uri.parse('$_apiBaseUrl/api/games/$gameId'),
+        Uri.parse('${apiBaseUrl}/api/games/$gameId'),
       );
 
       if (response.statusCode == 200) {
@@ -24,7 +22,7 @@ class GameApiService {
   // Check slot reclamation
   static Future<Map<String, dynamic>> checkSlotReclamation(String gameId, String playerId) async {
     final response = await http.get(
-      Uri.parse('$_apiBaseUrl/api/games/$gameId/can-reclaim/$playerId'),
+      Uri.parse('${apiBaseUrl}/api/games/$gameId/can-reclaim/$playerId'),
     );
 
     if (response.statusCode == 200) {
@@ -40,7 +38,7 @@ class GameApiService {
   // Reclaim slot
   static Future<Map<String, dynamic>> reclaimSlot(String gameId, String originalPlayerId, String playerName) async {
     final response = await http.post(
-      Uri.parse('$_apiBaseUrl/api/games/$gameId/reclaim-slot'),
+      Uri.parse('${apiBaseUrl}/api/games/$gameId/reclaim-slot'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode({
         'original_player_id': originalPlayerId,

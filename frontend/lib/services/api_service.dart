@@ -5,8 +5,6 @@ import '../config/app_config.dart';
 import 'auth_service.dart';
 
 class ApiService {
-  static const String _apiBaseUrl = apiBaseUrl;
-
   // Helper method to get headers with authentication
   static Map<String, String> _getHeaders() {
     final headers = {'Content-Type': 'application/json'};
@@ -17,7 +15,7 @@ class ApiService {
   // Game creation
   static Future<Map<String, dynamic>> createGame() async {
     final response = await http.post(
-      Uri.parse('$_apiBaseUrl/api/games/create'),
+      Uri.parse('${apiBaseUrl}/api/games/create'),
       headers: _getHeaders(),
     );
 
@@ -35,7 +33,7 @@ class ApiService {
   // Join game by code
   static Future<Map<String, dynamic>> joinGameByCode(String gameCode) async {
     final response = await http.post(
-      Uri.parse('$_apiBaseUrl/api/games/join-by-code'),
+      Uri.parse('${apiBaseUrl}/api/games/join-by-code'),
       headers: _getHeaders(),
       body: json.encode({
         'game_code': gameCode,
@@ -56,7 +54,7 @@ class ApiService {
   // Get game by code
   static Future<Map<String, dynamic>> getGameByCode(String gameCode) async {
     final response = await http.get(
-      Uri.parse('$_apiBaseUrl/api/games/code/$gameCode'),
+      Uri.parse('${apiBaseUrl}/api/games/code/$gameCode'),
       headers: _getHeaders(),
     );
 
@@ -76,7 +74,7 @@ class ApiService {
   // List games
   static Future<Map<String, dynamic>> listGames() async {
     final response = await http.get(
-      Uri.parse('$_apiBaseUrl/api/games'),
+      Uri.parse('${apiBaseUrl}/api/games'),
       headers: _getHeaders(),
     );
 
@@ -93,7 +91,7 @@ class ApiService {
   // Get game state
   static Future<Map<String, dynamic>> getGameState(String gameId) async {
     final response = await http.get(
-      Uri.parse('$_apiBaseUrl/api/games/$gameId'),
+      Uri.parse('${apiBaseUrl}/api/games/$gameId'),
       headers: _getHeaders(),
     );
 
@@ -111,7 +109,7 @@ class ApiService {
   static Future<Map<String, dynamic>> checkPlayerSession(
       String gameId, String playerName) async {
     final response = await http.get(
-      Uri.parse('$_apiBaseUrl/api/games/$gameId/session/$playerName'),
+      Uri.parse('${apiBaseUrl}/api/games/$gameId/session/$playerName'),
       headers: _getHeaders(),
     );
 
@@ -129,7 +127,7 @@ class ApiService {
   static Future<Map<String, dynamic>> canRejoin(
       String gameId, String playerName) async {
     final response = await http.get(
-      Uri.parse('$_apiBaseUrl/api/games/$gameId/can-rejoin/$playerName'),
+      Uri.parse('${apiBaseUrl}/api/games/$gameId/can-rejoin/$playerName'),
       headers: _getHeaders(),
     );
 
@@ -146,7 +144,7 @@ class ApiService {
   // Rejoin game
   static Future<Map<String, dynamic>> rejoinGame(String gameId) async {
     final response = await http.post(
-      Uri.parse('$_apiBaseUrl/api/games/$gameId/rejoin'),
+      Uri.parse('${apiBaseUrl}/api/games/$gameId/rejoin'),
       headers: _getHeaders(),
     );
 

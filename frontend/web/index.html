@@ -35,6 +35,13 @@
   <script>
     // The value below is injected by flutter build, do not touch.
     const serviceWorkerVersion = null;
+    
+    // App configuration from environment variables
+    window.APP_CONFIG = {
+      apiBaseUrl: 'API_BASE_URL_PLACEHOLDER',
+      wsBaseUrl: 'WS_BASE_URL_PLACEHOLDER',
+      baseUrl: 'BASE_URL_PLACEHOLDER'
+    };
   </script>
   <!-- This script adds the flutter initialization JS code -->
   <script src="flutter.js" defer></script>

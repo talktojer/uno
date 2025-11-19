@@ -31,8 +31,12 @@ FROM nginx:alpine AS runtime
 # Copy built web app to nginx
 COPY --from=build /app/build/web /usr/share/nginx/html
 
+# Copy entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Expose port
 EXPOSE 80
 
-# Start nginx
-CMD ["nginx", "-g", "daemon off;"]
+# Use entrypoint script to inject environment variables
+ENTRYPOINT ["/entrypoint.sh"]
