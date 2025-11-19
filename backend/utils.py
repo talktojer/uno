@@ -12,8 +12,10 @@ games_by_code: Dict[str, str] = {}  # Maps game codes to game IDs
 active_connections: Dict[str, WebSocket] = {}
 # Track original player ownership to prevent slot stealing
 player_identities: Dict[str, Dict[str, str]] = {}  # game_id -> {player_id -> original_slot_owner}
-# Track disconnected players for proper restoration
-disconnected_players: Dict[str, Dict[str, Player]] = {}  # game_id -> {player_id -> Player}
+# Track username-based slot ownership (game_id -> slot_index -> username)
+game_player_ownership: Dict[str, Dict[int, str]] = {}  # game_id -> {slot_index -> username}
+# Track disconnected players for proper restoration (by username)
+disconnected_players: Dict[str, Dict[str, Player]] = {}  # game_id -> {username -> Player}
 # Track player sessions for rejoining
 player_sessions: Dict[str, Dict[str, str]] = {}  # game_id -> {player_id -> session_token}
 
@@ -245,3 +247,5 @@ def cleanup_game_data(game_id: str):
         del disconnected_players[game_id]
     if game_id in player_sessions:
         del player_sessions[game_id]
+    if game_id in game_player_ownership:
+        del game_player_ownership[game_id]

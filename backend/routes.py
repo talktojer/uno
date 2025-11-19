@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 import secrets
 from models import JoinGameRequest, JoinGameByCodeRequest, PlayCardRequest, DrawCardRequest, ReclaimSlotRequest, LoginRequest, SignupRequest, TokenResponse
 from game_logic import UNOGame
-from utils import games, games_by_code, active_connections, player_identities, disconnected_players, player_sessions, broadcast_game_list_update, broadcast_game_state, cleanup_game_data, get_game, save_game
+from utils import games, games_by_code, active_connections, player_identities, disconnected_players, player_sessions, game_player_ownership, broadcast_game_list_update, broadcast_game_state, cleanup_game_data, get_game, save_game
 from database import get_db
 from game_storage import get_game_by_code_from_db, save_game_to_db
 from auth import authenticate_user, create_user, create_access_token, verify_token, get_user, validate_pin, validate_username, list_usernames
@@ -249,91 +249,160 @@ async def get_game_state(game_id: str, current_user: dict = Depends(get_current_
     return game.get_game_state()
 
 
-@router.post("/api/games/{game_id}/join")
-async def join_game(game_id: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Join a game by game ID"""
+@router.get("/api/games/{game_id}/my-slot")
+async def get_my_slot(game_id: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Get the current user's slot information if they're in the game"""
     game = get_game(db, game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     
-    # Initialize player identities tracking for this game if not exists
+    username = current_user.username
+    
+    # Check if user owns a slot
+    if game_id not in game_player_ownership:
+        return {"has_slot": False, "message": "You are not in this game"}
+    
+    slot_index = None
+    for slot_idx, slot_username in game_player_ownership[game_id].items():
+        if slot_username == username:
+            slot_index = slot_idx
+            break
+    
+    if slot_index is None:
+        return {"has_slot": False, "message": "You are not in this game"}
+    
+    # Get player info
+    player = game.players[slot_index]
+    is_connected = player.id in active_connections
+    is_disconnected = game_id in disconnected_players and username in disconnected_players[game_id]
+    
+    return {
+        "has_slot": True,
+        "slot_index": slot_index,
+        "player_id": player.id,
+        "player_name": player.name,
+        "is_connected": is_connected,
+        "can_rejoin": is_disconnected and not is_connected,
+        "message": f"You are player {slot_index + 1} in this game"
+    }
+
+
+@router.post("/api/games/{game_id}/join")
+async def join_game(game_id: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Join a game by game ID. Automatically handles both new joins and rejoins."""
+    game = get_game(db, game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    
+    username = current_user.username
+    
+    # Initialize game_player_ownership tracking for this game if not exists
+    if game_id not in game_player_ownership:
+        game_player_ownership[game_id] = {}
     if game_id not in player_identities:
         player_identities[game_id] = {}
     
-    # Check if there's an available slot (either empty or disconnected player)
-    available_slots = []
-    for i, player in enumerate(game.players):
-        if player.id not in active_connections:
-            available_slots.append(i)
+    # Note: We don't populate ownership from player.name for backward compatibility
+    # because player.name is not unique (two users could have the same name).
+    # For legacy games, slots remain unowned until someone joins and claims them with their unique username.
     
-    if len(game.players) >= 2 and not available_slots:
-        raise HTTPException(status_code=400, detail="Game is full")
+    # Step 1: Check if this username already owns a slot in this game
+    existing_slot_index = None
+    for slot_idx, slot_username in game_player_ownership[game_id].items():
+        if slot_username == username:
+            existing_slot_index = slot_idx
+            break
     
-    if game.game_started and not available_slots:
-        raise HTTPException(status_code=400, detail="Game already started and full")
+    # Step 2: If user owns a slot, rejoin their slot
+    if existing_slot_index is not None:
+        slot_index = existing_slot_index
+        existing_player = game.players[slot_index]
+        player_id = existing_player.id
+        
+        # Check if we have a disconnected player state to restore
+        if game_id in disconnected_players and username in disconnected_players[game_id]:
+            # Restore from disconnected player state
+            disconnected_player = disconnected_players[game_id][username]
+            game.players[slot_index] = disconnected_player
+            player_id = disconnected_player.id
+            del disconnected_players[game_id][username]
+            message = f"{username} rejoined the game."
+        elif existing_player.id in active_connections:
+            # Already connected
+            return {
+                "player_id": player_id,
+                "game_id": game_id,
+                "session_token": player_sessions.get(game_id, {}).get(player_id, ""),
+                "message": f"{username} is already connected to this game."
+            }
+        else:
+            message = f"{username} rejoined the game."
     
-    # If there's an available slot, check if we can claim it
-    if available_slots:
-        slot_index = available_slots[0]
-        old_player_id = game.players[slot_index].id
-        
-        # Check if this is a disconnected player that can be restored
-        if game_id in disconnected_players and old_player_id in disconnected_players[game_id]:
-            # This is a disconnected player, we should restore them instead of replacing
-            raise HTTPException(status_code=400, detail="This slot belongs to a disconnected player. Please use the reconnect feature instead.")
-        
-        # Create new player with the same slot
-        player_id = f"player_{slot_index + 1}"
-        from models import Player
-        player = Player(id=player_id, name=current_user.username, cards=[])
-        
-        # If game was started, give the new player the same cards as the old player
-        if game.game_started:
-            player.cards = game.players[slot_index].cards.copy()
-            # Reset turn if it was the disconnected player's turn
-            if slot_index == game.current_player_index:
-                player.is_current_turn = True
-        
-        # Update player identities to track this new player
-        player_identities[game_id][player_id] = old_player_id  # New player inherits the slot
-        
-        game.players[slot_index] = player
-        
-        # Remove old player from active connections
-        if old_player_id in active_connections:
-            del active_connections[old_player_id]
-        
-        message = f"Replaced disconnected player. {current_user.username} joined the game."
+    # Step 3: If user doesn't own a slot, find available slot
     else:
-        # Create new player in new slot
-        player_id = f"player_{len(game.players) + 1}"
-        from models import Player
-        player = Player(id=player_id, name=current_user.username, cards=[])
-        game.players.append(player)
-        
-        # Track this player's original slot ownership
-        player_identities[game_id][player_id] = player_id
-        
-        message = f"{current_user.username} joined the game."
+        if len(game.players) < 2:
+            slot_index = len(game.players)
+            player_id = f"player_{slot_index + 1}"
+            from models import Player
+            player = Player(id=player_id, name=username, cards=[])
+            game.players.append(player)
+            message = f"{username} joined the game."
+        else:
+            available_slot_index = None
+            for i, player in enumerate(game.players):
+                if player.id not in active_connections:
+                    slot_owner = game_player_ownership[game_id].get(i)
+                    if slot_owner is None or slot_owner != username:
+                        available_slot_index = i
+                        break
+            
+            if available_slot_index is not None:
+                slot_index = available_slot_index
+                old_player = game.players[slot_index]
+                old_player_id = old_player.id
+                player_id = f"player_{slot_index + 1}"
+                
+                from models import Player
+                player = Player(id=player_id, name=username, cards=[])
+                
+                if game.game_started:
+                    player.cards = old_player.cards.copy()
+                    if slot_index == game.current_player_index:
+                        player.is_current_turn = True
+                
+                game.players[slot_index] = player
+                
+                old_slot_owner = game_player_ownership[game_id].get(slot_index)
+                if old_slot_owner and game_id in disconnected_players and old_slot_owner in disconnected_players[game_id]:
+                    del disconnected_players[game_id][old_slot_owner]
+                
+                if old_player_id in active_connections:
+                    del active_connections[old_player_id]
+                
+                message = f"{username} joined the game."
+            else:
+                raise HTTPException(status_code=400, detail="Game is full and all slots are occupied")
     
-    # Broadcast updated game list to all connected players
+    # Update username-based slot ownership
+    game_player_ownership[game_id][slot_index] = username
+    player_identities[game_id][player_id] = player_id
+    
+    # Broadcast updated game list
     await broadcast_game_list_update()
     
-    # Generate session token for this player
+    # Generate session token
     session_token = secrets.token_urlsafe(32)
     if game_id not in player_sessions:
         player_sessions[game_id] = {}
     player_sessions[game_id][player_id] = session_token
     
-    # Save game state to database
     save_game(db, game_id)
     
-    # If this is a replacement in a started game, broadcast the updated game state
     if game.game_started:
         await broadcast_game_state(game_id, {
-            "type": "player_replaced",
+            "type": "player_joined" if "joined" in message.lower() else "player_rejoined",
             "message": message,
-            "new_player": player.model_dump()
+            "player": game.players[slot_index].model_dump()
         })
     
     return {
@@ -346,9 +415,9 @@ async def join_game(game_id: str, current_user: dict = Depends(get_current_user)
 
 @router.post("/api/games/join-by-code")
 async def join_game_by_code(request: JoinGameByCodeRequest, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Join a game by 5-character game code"""
+    """Join a game by 5-character game code. Automatically handles both new joins and rejoins."""
     game_code = request.game_code
-    player_name = current_user.username
+    username = current_user.username
     
     # Check cache first
     if game_code in games_by_code:
@@ -365,65 +434,112 @@ async def join_game_by_code(request: JoinGameByCodeRequest, current_user: dict =
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     
-    # Initialize player identities tracking for this game if not exists
+    # Initialize game_player_ownership tracking for this game if not exists
+    if game_id not in game_player_ownership:
+        game_player_ownership[game_id] = {}
     if game_id not in player_identities:
         player_identities[game_id] = {}
     
-    # Check if there's an available slot (either empty or disconnected player)
-    available_slots = []
-    for i, player in enumerate(game.players):
-        if player.id not in active_connections:
-            available_slots.append(i)
+    # Note: We don't populate ownership from player.name for backward compatibility
+    # because player.name is not unique (two users could have the same name).
+    # For legacy games, slots remain unowned until someone joins and claims them with their unique username.
     
-    if len(game.players) >= 2 and not available_slots:
-        raise HTTPException(status_code=400, detail="Game is full")
+    # Step 1: Check if this username already owns a slot in this game
+    existing_slot_index = None
+    for slot_idx, slot_username in game_player_ownership[game_id].items():
+        if slot_username == username:
+            existing_slot_index = slot_idx
+            break
     
-    if game.game_started and not available_slots:
-        raise HTTPException(status_code=400, detail="Game already started and full")
+    # Step 2: If user owns a slot, rejoin their slot
+    if existing_slot_index is not None:
+        slot_index = existing_slot_index
+        existing_player = game.players[slot_index]
+        player_id = existing_player.id
+        
+        # Check if we have a disconnected player state to restore
+        if game_id in disconnected_players and username in disconnected_players[game_id]:
+            # Restore from disconnected player state
+            disconnected_player = disconnected_players[game_id][username]
+            # Update the player in place, preserving slot position
+            game.players[slot_index] = disconnected_player
+            player_id = disconnected_player.id
+            # Remove from disconnected players
+            del disconnected_players[game_id][username]
+            message = f"{username} rejoined the game."
+        elif existing_player.id in active_connections:
+            # Already connected, just return existing slot
+            return {
+                "player_id": player_id,
+                "game_id": game_id,
+                "session_token": player_sessions.get(game_id, {}).get(player_id, ""),
+                "message": f"{username} is already connected to this game."
+            }
+        else:
+            # Slot exists but player is not connected, restore the existing player
+            message = f"{username} rejoined the game."
     
-    # If there's an available slot, check if we can claim it
-    if available_slots:
-        slot_index = available_slots[0]
-        old_player_id = game.players[slot_index].id
-        
-        # Check if this is a disconnected player that can be restored
-        if game_id in disconnected_players and old_player_id in disconnected_players[game_id]:
-            # This is a disconnected player, we should restore them instead of replacing
-            raise HTTPException(status_code=400, detail="This slot belongs to a disconnected player. Please use the reconnect feature instead.")
-        
-        # Create new player with the same slot
-        player_id = f"player_{slot_index + 1}"
-        from models import Player
-        player = Player(id=player_id, name=player_name, cards=[])
-        
-        # If game was started, give the new player the same cards as the old player
-        if game.game_started:
-            player.cards = game.players[slot_index].cards.copy()
-            # Reset turn if it was the disconnected player's turn
-            if slot_index == game.current_player_index:
-                player.is_current_turn = True
-        
-        # Update player identities to track this new player
-        player_identities[game_id][player_id] = old_player_id  # New player inherits the slot
-        
-        game.players[slot_index] = player
-        
-        # Remove old player from active connections
-        if old_player_id in active_connections:
-            del active_connections[old_player_id]
-        
-        message = f"Replaced disconnected player. {player_name} joined the game."
+    # Step 3: If user doesn't own a slot, find available slot (empty or disconnected from different user)
     else:
-        # Create new player in new slot
-        player_id = f"player_{len(game.players) + 1}"
-        from models import Player
-        player = Player(id=player_id, name=player_name, cards=[])
-        game.players.append(player)
+        available_slot_index = None
         
-        # Track this player's original slot ownership
-        player_identities[game_id][player_id] = player_id
+        # Check for empty slots first
+        if len(game.players) < 2:
+            # Create new slot
+            slot_index = len(game.players)
+            player_id = f"player_{slot_index + 1}"
+            from models import Player
+            player = Player(id=player_id, name=username, cards=[])
+            game.players.append(player)
+            message = f"{username} joined the game."
         
-        message = f"{player_name} joined the game."
+        # Check for disconnected slots from different users
+        elif len(game.players) >= 2:
+            for i, player in enumerate(game.players):
+                if player.id not in active_connections:
+                    # Check if this slot belongs to a different user (or no user)
+                    slot_owner = game_player_ownership[game_id].get(i)
+                    if slot_owner is None or slot_owner != username:
+                        # This slot is available (either no owner or belongs to disconnected different user)
+                        available_slot_index = i
+                        break
+            
+            if available_slot_index is not None:
+                slot_index = available_slot_index
+                old_player = game.players[slot_index]
+                old_player_id = old_player.id
+                player_id = f"player_{slot_index + 1}"
+                
+                from models import Player
+                player = Player(id=player_id, name=username, cards=[])
+                
+                # If game was started, give the new player the same cards as the old player
+                if game.game_started:
+                    player.cards = old_player.cards.copy()
+                    # Reset turn if it was the disconnected player's turn
+                    if slot_index == game.current_player_index:
+                        player.is_current_turn = True
+                
+                game.players[slot_index] = player
+                
+                # Clean up old player's disconnected state if it exists
+                old_slot_owner = game_player_ownership[game_id].get(slot_index)
+                if old_slot_owner and game_id in disconnected_players and old_slot_owner in disconnected_players[game_id]:
+                    del disconnected_players[game_id][old_slot_owner]
+                
+                # Remove old player from active connections
+                if old_player_id in active_connections:
+                    del active_connections[old_player_id]
+                
+                message = f"{username} joined the game."
+            else:
+                raise HTTPException(status_code=400, detail="Game is full and all slots are occupied")
+    
+    # Update username-based slot ownership
+    game_player_ownership[game_id][slot_index] = username
+    
+    # Track player identities for backward compatibility
+    player_identities[game_id][player_id] = player_id
     
     # Broadcast updated game list to all connected players
     await broadcast_game_list_update()
@@ -437,12 +553,12 @@ async def join_game_by_code(request: JoinGameByCodeRequest, current_user: dict =
     # Save game state to database
     save_game(db, game_id)
     
-    # If this is a replacement in a started game, broadcast the updated game state
+    # Broadcast updated game state
     if game.game_started:
         await broadcast_game_state(game_id, {
-            "type": "player_replaced",
+            "type": "player_joined" if "joined" in message.lower() else "player_rejoined",
             "message": message,
-            "new_player": player.model_dump()
+            "player": game.players[slot_index].model_dump()
         })
     
     return {

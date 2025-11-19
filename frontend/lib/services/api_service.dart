@@ -105,6 +105,23 @@ class ApiService {
     }
   }
 
+  // Get my slot information in a game
+  static Future<Map<String, dynamic>> getMySlot(String gameId) async {
+    final response = await http.get(
+      Uri.parse('${apiBaseUrl}/api/games/$gameId/my-slot'),
+      headers: _getHeaders(),
+    );
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    } else {
+      throw ApiException(
+        statusCode: response.statusCode,
+        message: 'Failed to get slot information',
+      );
+    }
+  }
+
   // Check player session
   static Future<Map<String, dynamic>> checkPlayerSession(
       String gameId, String playerName) async {

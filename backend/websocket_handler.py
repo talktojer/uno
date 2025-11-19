@@ -1,7 +1,7 @@
 import json
 from fastapi import WebSocket, WebSocketDisconnect
 from models import CardColor
-from utils import games, active_connections, disconnected_players, broadcast_game_state, broadcast_game_list_update, get_game, save_game
+from utils import games, active_connections, disconnected_players, game_player_ownership, broadcast_game_state, broadcast_game_list_update, get_game, save_game
 from database import SessionLocal
 
 
@@ -232,16 +232,28 @@ async def game_websocket_endpoint(websocket: WebSocket, game_id: str, player_id:
                 # Find the disconnected player and store their information
                 player = next((p for p in game.players if p.id == player_id), None)
                 if player:
-                    # Store the disconnected player for potential restoration
-                    if game_id not in disconnected_players:
-                        disconnected_players[game_id] = {}
-                    disconnected_players[game_id][player_id] = player
+                    # Find the username for this player using game_player_ownership
+                    username = None
+                    slot_index = None
+                    if game_id in game_player_ownership:
+                        for slot_idx, slot_username in game_player_ownership[game_id].items():
+                            if slot_idx < len(game.players) and game.players[slot_idx].id == player_id:
+                                username = slot_username
+                                slot_index = slot_idx
+                                break
+                    
+                    # Only store disconnected player if we have a valid username (ownership exists)
+                    # This ensures we use unique usernames, not player.name which could collide
+                    if username is not None:
+                        # Store the disconnected player for potential restoration (by username)
+                        if game_id not in disconnected_players:
+                            disconnected_players[game_id] = {}
+                        disconnected_players[game_id][username] = player
+                    # If ownership doesn't exist, this is likely a legacy game or a race condition.
+                    # The player will need to rejoin via the join endpoint which will assign proper ownership.
                     
                     # Save game state to database (player disconnected state)
                     save_game(db, game_id)
-                    
-                    # Mark the player as disconnected in the game state
-                    # but keep them in the players list for proper slot management
                     
                     # Broadcast updated game list to show available slots
                     await broadcast_game_list_update()

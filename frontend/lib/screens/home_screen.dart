@@ -316,50 +316,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _rejoinGame() async {
-    if (_currentUsername == null) {
-      HomeScreenUtils.showErrorSnackBar(context, 'Please log in first');
-      return;
-    }
-
-    if (_gameCodeController.text.trim().isEmpty) {
-      HomeScreenUtils.showErrorSnackBar(context, 'Please enter a game code');
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final gameCodeData =
-          await ApiService.getGameByCode(_gameCodeController.text.trim());
-      final gameId = gameCodeData['game_id'];
-
-      final sessionData = await ApiService.checkPlayerSession(
-          gameId, _currentUsername!);
-
-      if (sessionData['has_session']) {
-        final checkData = await ApiService.canRejoin(
-            gameId, _currentUsername!);
-
-        if (checkData['can_rejoin']) {
-          final data = await ApiService.rejoinGame(gameId);
-          _navigateToGame(gameId, data['player_id'], _currentUsername!);
-        } else {
-          _showRejoinNotPossibleDialog(gameId, checkData['message']);
-        }
-      } else {
-        HomeScreenUtils.showWarningSnackBar(context,
-            'You have not played this game before. Use "Join as New Player" instead.');
-      }
-    } on ApiException catch (e) {
-      HomeScreenUtils.showErrorSnackBar(context, 'Rejoin failed: $e');
-      _tryRejoinFallback();
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
-    }
+    // With the new unified join endpoint, rejoin is the same as join
+    // The backend automatically detects if the user owns a slot and rejoins them
+    // or joins them as a new player if they don't own a slot
+    await _joinGameByCode();
   }
 
   void _tryRejoinFallback() async {
@@ -377,23 +337,9 @@ class _HomeScreenState extends State<HomeScreen> {
       HomeScreenUtils.showErrorSnackBar(
           context, 'This game has ended and is no longer available.');
       _lobbyService.connect(); // Refresh game list
-    } else if (HomeScreenUtils.isDisconnectedPlayerError(e.message)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text(
-              'This slot belongs to a disconnected player. Use "Rejoin Game" instead.'),
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.orange,
-          shape: RoundedRectangleBorder(
-              borderRadius: HomeScreenUtils.borderRadius),
-          action: SnackBarAction(
-            label: 'Rejoin',
-            textColor: Colors.white,
-            onPressed: () => _selectAction('rejoin'),
-          ),
-        ),
-      );
     } else {
+      // With the new unified join endpoint, disconnected player errors should not occur
+      // as the backend automatically handles rejoining or joining as new player
       HomeScreenUtils.showErrorSnackBar(context, 'Error: ${e.message}');
     }
   }
