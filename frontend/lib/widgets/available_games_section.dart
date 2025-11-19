@@ -6,6 +6,7 @@ class AvailableGamesSection extends StatelessWidget {
   final String playerName;
   final Function(String) onActionSelected;
   final Function(String) onJoinGameDirectly;
+  final Function(String) onDeleteGame;
 
   const AvailableGamesSection({
     super.key,
@@ -14,6 +15,7 @@ class AvailableGamesSection extends StatelessWidget {
     required this.playerName,
     required this.onActionSelected,
     required this.onJoinGameDirectly,
+    required this.onDeleteGame,
   });
 
   void _copyGameCode(BuildContext context, String gameCode) {
@@ -31,6 +33,32 @@ class AvailableGamesSection extends StatelessWidget {
 
   void _joinGameDirectly(BuildContext context, String gameCode) {
     onJoinGameDirectly(gameCode);
+  }
+
+  Future<void> _confirmAndDeleteGame(
+      BuildContext context, String gameId, String gameCode) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Game'),
+        content: Text('Are you sure you want to delete game $gameCode? This action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      onDeleteGame(gameId);
+    }
   }
 
   @override
@@ -105,26 +133,32 @@ class AvailableGamesSection extends StatelessWidget {
                           ),
                       ],
                     ),
-                    trailing: (game['status'] == 'waiting' ||
-                            game['status'] == 'waiting_for_replacement')
-                        ? Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon:
-                                    const Icon(Icons.copy, color: Colors.blue),
-                                onPressed: () => _copyGameCode(
-                                    context, game['game_code'] ?? ''),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.play_arrow,
-                                    color: Colors.green),
-                                onPressed: () => _joinGameDirectly(
-                                    context, game['game_code'] ?? ''),
-                              ),
-                            ],
-                          )
-                        : null,
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (game['status'] == 'waiting' ||
+                            game['status'] == 'waiting_for_replacement') ...[
+                          IconButton(
+                            icon: const Icon(Icons.copy, color: Colors.blue),
+                            onPressed: () => _copyGameCode(
+                                context, game['game_code'] ?? ''),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.play_arrow,
+                                color: Colors.green),
+                            onPressed: () => _joinGameDirectly(
+                                context, game['game_code'] ?? ''),
+                          ),
+                        ],
+                        IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () => _confirmAndDeleteGame(
+                              context,
+                              game['game_id'] ?? '',
+                              game['game_code'] ?? ''),
+                        ),
+                      ],
+                    ),
                   ),
                 );
               },

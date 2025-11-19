@@ -159,6 +159,24 @@ class ApiService {
     }
   }
 
+  // Delete game
+  static Future<Map<String, dynamic>> deleteGame(String gameId) async {
+    final response = await http.delete(
+      Uri.parse('${apiBaseUrl}/api/games/$gameId'),
+      headers: _getHeaders(),
+    );
+
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    } else {
+      final errorData = json.decode(response.body);
+      throw ApiException(
+        statusCode: response.statusCode,
+        message: errorData['detail'] ?? 'Failed to delete game',
+      );
+    }
+  }
+
   // Store session token
   static void storeSessionToken(
       String gameId, String playerName, String sessionToken) {

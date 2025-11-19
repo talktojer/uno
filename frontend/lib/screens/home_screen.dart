@@ -413,6 +413,24 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _deleteGame(String gameId) async {
+    if (gameId.isEmpty) {
+      HomeScreenUtils.showErrorSnackBar(context, 'Invalid game ID');
+      return;
+    }
+
+    try {
+      final data = await ApiService.deleteGame(gameId);
+      HomeScreenUtils.showSuccessSnackBar(
+          context, data['message'] ?? 'Game deleted successfully');
+      // Game list will auto-refresh via WebSocket updates
+    } on ApiException catch (e) {
+      HomeScreenUtils.showErrorSnackBar(context, 'Error deleting game: ${e.message}');
+    } catch (e) {
+      HomeScreenUtils.showErrorSnackBar(context, 'Error deleting game: $e');
+    }
+  }
+
   // UI state management
   void _selectAction(String action) {
     setState(() {
@@ -576,6 +594,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         playerName: _currentUsername ?? '',
                         onActionSelected: _selectAction,
                         onJoinGameDirectly: _joinGameDirectly,
+                        onDeleteGame: _deleteGame,
                       ),
                     ],
                   ],

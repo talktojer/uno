@@ -4,7 +4,7 @@ from typing import Dict
 import secrets
 from models import JoinGameRequest, JoinGameByCodeRequest, PlayCardRequest, DrawCardRequest, ReclaimSlotRequest, LoginRequest, SignupRequest, TokenResponse
 from game_logic import UNOGame
-from utils import games, games_by_code, active_connections, player_identities, disconnected_players, player_sessions, broadcast_game_list_update, broadcast_game_state
+from utils import games, games_by_code, active_connections, player_identities, disconnected_players, player_sessions, broadcast_game_list_update, broadcast_game_state, cleanup_game_data
 from auth import authenticate_user, create_user, create_access_token, verify_token, get_user, validate_pin, validate_username, list_usernames
 
 router = APIRouter()
@@ -656,3 +656,43 @@ async def can_reclaim_slot(game_id: str, original_player_id: str, current_user: 
                 return {"can_reclaim": False, "reason": "Original slot is currently occupied by an active player"}
     
     return {"can_reclaim": False, "reason": "Original slot not found"}
+
+
+@router.delete("/api/games/{game_id}")
+async def delete_game(game_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a game"""
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    
+    game = games[game_id]
+    game_code = game.game_code
+    
+    # Remove game from dictionaries
+    del games[game_id]
+    if game_code in games_by_code:
+        del games_by_code[game_code]
+    
+    # Clean up related data
+    cleanup_game_data(game_id)
+    
+    # Clean up player sessions for this game
+    if game_id in player_sessions:
+        del player_sessions[game_id]
+    
+    # Remove active connections for players in this game
+    for player in game.players:
+        if player.id in active_connections:
+            try:
+                await active_connections[player.id].close()
+            except Exception:
+                pass
+            del active_connections[player.id]
+    
+    # Broadcast updated game list to all connected players
+    await broadcast_game_list_update()
+    
+    return {
+        "message": f"Game {game_id} (code: {game_code}) deleted successfully",
+        "game_id": game_id,
+        "game_code": game_code
+    }

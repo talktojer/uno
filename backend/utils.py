@@ -162,3 +162,5 @@ def cleanup_game_data(game_id: str):
         del player_identities[game_id]
     if game_id in disconnected_players:
         del disconnected_players[game_id]
+    if game_id in player_sessions:
+        del player_sessions[game_id]
