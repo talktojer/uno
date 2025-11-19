@@ -1,7 +1,9 @@
 import json
-from typing import Dict
+from typing import Dict, Optional
 from fastapi import WebSocket
+from sqlalchemy.orm import Session
 from models import Player
+from game_storage import load_game_from_db, save_game_to_db, get_game_by_code_from_db, list_games_from_db
 
 
 # Global state management
@@ -14,6 +16,41 @@ player_identities: Dict[str, Dict[str, str]] = {}  # game_id -> {player_id -> or
 disconnected_players: Dict[str, Dict[str, Player]] = {}  # game_id -> {player_id -> Player}
 # Track player sessions for rejoining
 player_sessions: Dict[str, Dict[str, str]] = {}  # game_id -> {player_name -> session_token}
+
+
+def get_game(db: Session, game_id: str) -> Optional['UNOGame']:
+    """Get a game from cache or load from database"""
+    # Check cache first
+    if game_id in games:
+        return games[game_id]
+    
+    # Load from database
+    game = load_game_from_db(db, game_id)
+    if game:
+        # Update cache
+        games[game_id] = game
+        games_by_code[game.game_code] = game_id
+        return game
+    
+    return None
+
+
+def save_game(db: Session, game_id: str) -> None:
+    """Save a game to database and update cache"""
+    if game_id not in games:
+        return
+    
+    game = games[game_id]
+    save_game_to_db(db, game)
+    # Update games_by_code cache
+    games_by_code[game.game_code] = game_id
+
+
+def load_games_by_code_from_db(db: Session) -> None:
+    """Load games_by_code mapping from database on startup"""
+    db_games = list_games_from_db(db)
+    for db_game in db_games:
+        games_by_code[db_game.game_code] = db_game.id
 
 
 async def broadcast_game_state(game_id: str, additional_data: dict = None):

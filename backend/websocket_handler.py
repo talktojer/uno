@@ -1,7 +1,8 @@
 import json
 from fastapi import WebSocket, WebSocketDisconnect
 from models import CardColor
-from utils import games, active_connections, disconnected_players, broadcast_game_state, broadcast_game_list_update
+from utils import games, active_connections, disconnected_players, broadcast_game_state, broadcast_game_list_update, get_game, save_game
+from database import SessionLocal
 
 
 async def lobby_websocket_endpoint(websocket: WebSocket, player_id: str):
@@ -36,21 +37,25 @@ async def game_websocket_endpoint(websocket: WebSocket, game_id: str, player_id:
     active_connections[player_id] = websocket
     
     # Send initial game state to the newly connected player
-    if game_id in games:
-        game = games[game_id]
-        game_state = game.get_game_state()
-        print(f"Sending initial game state to player {player_id}")
-        await websocket.send_text(json.dumps({
-            "type": "game_update",
-            "game_state": game_state.model_dump(),  # Use model_dump() for Pydantic v2
-        }))
-    else:
-        print(f"Game {game_id} not found for player {player_id}")
-        await websocket.send_text(json.dumps({
-            "type": "error",
-            "message": "Game not found"
-        }))
-        return
+    db = SessionLocal()
+    try:
+        game = get_game(db, game_id)
+        if game:
+            game_state = game.get_game_state()
+            print(f"Sending initial game state to player {player_id}")
+            await websocket.send_text(json.dumps({
+                "type": "game_update",
+                "game_state": game_state.model_dump(),  # Use model_dump() for Pydantic v2
+            }))
+        else:
+            print(f"Game {game_id} not found for player {player_id}")
+            await websocket.send_text(json.dumps({
+                "type": "error",
+                "message": "Game not found"
+            }))
+            return
+    finally:
+        db.close()
     
     try:
         while True:
@@ -68,42 +73,65 @@ async def game_websocket_endpoint(websocket: WebSocket, game_id: str, player_id:
                 card_index = message.get("card_index")
                 new_color = message.get("new_color")
                 
-                if game_id in games and card_index is not None:
-                    game = games[game_id]
-                    player_index = next((i for i, p in enumerate(game.players) if p.id == player_id), None)
-                    
-                    if player_index is not None:
-                        try:
-                            # Convert string color to CardColor enum if provided
-                            card_color = None
-                            if new_color:
-                                try:
-                                    card_color = CardColor(new_color)
-                                except ValueError:
-                                    await websocket.send_text(json.dumps({
-                                        "type": "error",
-                                        "message": "Invalid color specified"
-                                    }))
-                                    continue
-                            
-                            result = game.play_card(player_index, card_index, card_color)
-                            # Broadcast updated game state to all players
-                            await broadcast_game_state(game_id, {
-                                "type": "card_played",
-                                "result": result
-                            })
-                        except ValueError as e:
+                if card_index is not None:
+                    db = SessionLocal()
+                    try:
+                        game = get_game(db, game_id)
+                        if not game:
                             await websocket.send_text(json.dumps({
                                 "type": "error",
-                                "message": str(e)
+                                "message": "Game not found"
                             }))
+                            continue
+                        
+                        player_index = next((i for i, p in enumerate(game.players) if p.id == player_id), None)
+                        
+                        if player_index is not None:
+                            try:
+                                # Convert string color to CardColor enum if provided
+                                card_color = None
+                                if new_color:
+                                    try:
+                                        card_color = CardColor(new_color)
+                                    except ValueError:
+                                        await websocket.send_text(json.dumps({
+                                            "type": "error",
+                                            "message": "Invalid color specified"
+                                        }))
+                                        continue
+                                
+                                result = game.play_card(player_index, card_index, card_color)
+                                # Save game state to database
+                                save_game(db, game_id)
+                                # Broadcast updated game state to all players
+                                await broadcast_game_state(game_id, {
+                                    "type": "card_played",
+                                    "result": result
+                                })
+                            except ValueError as e:
+                                await websocket.send_text(json.dumps({
+                                    "type": "error",
+                                    "message": str(e)
+                                }))
+                    finally:
+                        db.close()
                 
             elif message.get("type") == "start_game":
                 # Handle starting the game
-                if game_id in games:
-                    game = games[game_id]
+                db = SessionLocal()
+                try:
+                    game = get_game(db, game_id)
+                    if not game:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "message": "Game not found"
+                        }))
+                        continue
+                    
                     if len(game.players) == 2:
                         game.start_game()
+                        # Save game state to database
+                        save_game(db, game_id)
                         # Broadcast updated game state to all players
                         await broadcast_game_state(game_id)
                         # Also send a separate start confirmation
@@ -122,16 +150,21 @@ async def game_websocket_endpoint(websocket: WebSocket, game_id: str, player_id:
                             "type": "error",
                             "message": "Need exactly 2 players to start"
                         }))
-                else:
-                    await websocket.send_text(json.dumps({
-                        "type": "error",
-                        "message": "Game not found"
-                    }))
+                finally:
+                    db.close()
                     
             elif message.get("type") == "join_game":
                 # Handle player joining the game via WebSocket
-                if game_id in games:
-                    game = games[game_id]
+                db = SessionLocal()
+                try:
+                    game = get_game(db, game_id)
+                    if not game:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "message": "Game not found"
+                        }))
+                        continue
+                    
                     # Verify this player is actually in the game
                     player_in_game = next((p for p in game.players if p.id == player_id), None)
                     if player_in_game:
@@ -150,16 +183,21 @@ async def game_websocket_endpoint(websocket: WebSocket, game_id: str, player_id:
                             "type": "error",
                             "message": "Player not found in game"
                         }))
-                else:
-                    await websocket.send_text(json.dumps({
-                        "type": "error",
-                        "message": "Game not found"
-                    }))
+                finally:
+                    db.close()
                     
             elif message.get("type") == "draw_card":
                 # Handle drawing a card
-                if game_id in games:
-                    game = games[game_id]
+                db = SessionLocal()
+                try:
+                    game = get_game(db, game_id)
+                    if not game:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "message": "Game not found"
+                        }))
+                        continue
+                    
                     player_index = next((i for i, p in enumerate(game.players) if p.id == player_id), None)
                     
                     if player_index is not None:
@@ -167,6 +205,8 @@ async def game_websocket_endpoint(websocket: WebSocket, game_id: str, player_id:
                         if card:
                             # Advance turn after drawing
                             game._next_player()
+                            # Save game state to database
+                            save_game(db, game_id)
                             await broadcast_game_state(game_id, {
                                 "type": "card_drawn",
                                 "card": card.model_dump(),
@@ -177,40 +217,48 @@ async def game_websocket_endpoint(websocket: WebSocket, game_id: str, player_id:
                                 "type": "error",
                                 "message": "Cannot draw card"
                             }))
+                finally:
+                    db.close()
             
     except WebSocketDisconnect:
         if player_id in active_connections:
             del active_connections[player_id]
             
         # Check if this was a game player and update game status
-        if game_id in games:
-            game = games[game_id]
-            
-            # Find the disconnected player and store their information
-            player = next((p for p in game.players if p.id == player_id), None)
-            if player:
-                # Store the disconnected player for potential restoration
-                if game_id not in disconnected_players:
-                    disconnected_players[game_id] = {}
-                disconnected_players[game_id][player_id] = player
-                
-                # Mark the player as disconnected in the game state
-                # but keep them in the players list for proper slot management
-                
-                # Broadcast updated game list to show available slots
-                await broadcast_game_list_update()
-                
-                # If game was started and player disconnected, notify other players
-                if game.game_started:
-                    await broadcast_game_state(game_id, {
-                        "type": "player_disconnected",
-                        "message": f"{player.name} disconnected from the game",
-                        "disconnected_player_id": player_id,
-                        "can_rejoin": True
-                    })
+        db = SessionLocal()
+        try:
+            game = get_game(db, game_id)
+            if game:
+                # Find the disconnected player and store their information
+                player = next((p for p in game.players if p.id == player_id), None)
+                if player:
+                    # Store the disconnected player for potential restoration
+                    if game_id not in disconnected_players:
+                        disconnected_players[game_id] = {}
+                    disconnected_players[game_id][player_id] = player
                     
-                # Also send a message to the lobby to update game status
-                await broadcast_game_list_update()
+                    # Save game state to database (player disconnected state)
+                    save_game(db, game_id)
+                    
+                    # Mark the player as disconnected in the game state
+                    # but keep them in the players list for proper slot management
+                    
+                    # Broadcast updated game list to show available slots
+                    await broadcast_game_list_update()
+                    
+                    # If game was started and player disconnected, notify other players
+                    if game.game_started:
+                        await broadcast_game_state(game_id, {
+                            "type": "player_disconnected",
+                            "message": f"{player.name} disconnected from the game",
+                            "disconnected_player_id": player_id,
+                            "can_rejoin": True
+                        })
+                        
+                    # Also send a message to the lobby to update game status
+                    await broadcast_game_list_update()
+        finally:
+            db.close()
 
 
 async def send_game_list_to_player(websocket: WebSocket):

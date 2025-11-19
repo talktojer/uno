@@ -1,10 +1,13 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Dict
+from sqlalchemy.orm import Session
 import secrets
 from models import JoinGameRequest, JoinGameByCodeRequest, PlayCardRequest, DrawCardRequest, ReclaimSlotRequest, LoginRequest, SignupRequest, TokenResponse
 from game_logic import UNOGame
-from utils import games, games_by_code, active_connections, player_identities, disconnected_players, player_sessions, broadcast_game_list_update, broadcast_game_state, cleanup_game_data
+from utils import games, games_by_code, active_connections, player_identities, disconnected_players, player_sessions, broadcast_game_list_update, broadcast_game_state, cleanup_game_data, get_game, save_game
+from database import get_db
+from game_storage import get_game_by_code_from_db, save_game_to_db
 from auth import authenticate_user, create_user, create_access_token, verify_token, get_user, validate_pin, validate_username, list_usernames
 
 router = APIRouter()
@@ -138,17 +141,20 @@ async def debug_auth():
 
 
 @router.post("/api/games/create")
-async def create_game(current_user: dict = Depends(get_current_user)):
+async def create_game(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Create a new game"""
     game_id = f"game_{len(games) + 1}"
     game = UNOGame(game_id)
     
     # Ensure unique game code
-    while game.game_code in games_by_code:
+    while game.game_code in games_by_code or get_game_by_code_from_db(db, game.game_code):
         game.game_code = game._generate_game_code()
     
     games[game_id] = game
     games_by_code[game.game_code] = game_id
+    
+    # Save to database
+    save_game(db, game_id)
     
     # Broadcast updated game list to all connected players
     await broadcast_game_list_update()
@@ -161,7 +167,7 @@ async def create_game(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/api/games")
-async def list_games(current_user: dict = Depends(get_current_user)):
+async def list_games(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """List all available games"""
     available_games = []
     for game_id, game in games.items():
@@ -181,13 +187,22 @@ async def list_games(current_user: dict = Depends(get_current_user)):
 
 
 @router.get("/api/games/code/{game_code}")
-async def get_game_by_code(game_code: str, current_user: dict = Depends(get_current_user)):
+async def get_game_by_code(game_code: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Get game information by game code"""
-    if game_code not in games_by_code:
-        raise HTTPException(status_code=404, detail="Game code not found")
+    # Check cache first
+    if game_code in games_by_code:
+        game_id = games_by_code[game_code]
+    else:
+        # Check database
+        game_id = get_game_by_code_from_db(db, game_code)
+        if not game_id:
+            raise HTTPException(status_code=404, detail="Game code not found")
+        # Load game into cache
+        get_game(db, game_id)
     
-    game_id = games_by_code[game_code]
-    game = games[game_id]
+    game = get_game(db, game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
     
     # Check if game has ended
     if game.game_ended:
@@ -210,21 +225,21 @@ async def get_game_by_code(game_code: str, current_user: dict = Depends(get_curr
 
 
 @router.get("/api/games/{game_id}")
-async def get_game_state(game_id: str, current_user: dict = Depends(get_current_user)):
+async def get_game_state(game_id: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Get current game state"""
-    if game_id not in games:
+    game = get_game(db, game_id)
+    if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     
-    return games[game_id].get_game_state()
+    return game.get_game_state()
 
 
 @router.post("/api/games/{game_id}/join")
-async def join_game(game_id: str, current_user: dict = Depends(get_current_user)):
+async def join_game(game_id: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Join a game by game ID"""
-    if game_id not in games:
+    game = get_game(db, game_id)
+    if not game:
         raise HTTPException(status_code=404, detail="Game not found")
-    
-    game = games[game_id]
     
     # Initialize player identities tracking for this game if not exists
     if game_id not in player_identities:
@@ -295,6 +310,9 @@ async def join_game(game_id: str, current_user: dict = Depends(get_current_user)
         player_sessions[game_id] = {}
     player_sessions[game_id][current_user.username] = session_token
     
+    # Save game state to database
+    save_game(db, game_id)
+    
     # If this is a replacement in a started game, broadcast the updated game state
     if game.game_started:
         await broadcast_game_state(game_id, {
@@ -312,16 +330,25 @@ async def join_game(game_id: str, current_user: dict = Depends(get_current_user)
 
 
 @router.post("/api/games/join-by-code")
-async def join_game_by_code(request: JoinGameByCodeRequest, current_user: dict = Depends(get_current_user)):
+async def join_game_by_code(request: JoinGameByCodeRequest, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Join a game by 5-character game code"""
     game_code = request.game_code
     player_name = current_user.username
     
-    if game_code not in games_by_code:
-        raise HTTPException(status_code=404, detail="Game code not found")
+    # Check cache first
+    if game_code in games_by_code:
+        game_id = games_by_code[game_code]
+    else:
+        # Check database
+        game_id = get_game_by_code_from_db(db, game_code)
+        if not game_id:
+            raise HTTPException(status_code=404, detail="Game code not found")
+        # Load game into cache
+        get_game(db, game_id)
     
-    game_id = games_by_code[game_code]
-    game = games[game_id]
+    game = get_game(db, game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
     
     # Initialize player identities tracking for this game if not exists
     if game_id not in player_identities:
@@ -392,6 +419,9 @@ async def join_game_by_code(request: JoinGameByCodeRequest, current_user: dict =
         player_sessions[game_id] = {}
     player_sessions[game_id][player_name] = session_token
     
+    # Save game state to database
+    save_game(db, game_id)
+    
     # If this is a replacement in a started game, broadcast the updated game state
     if game.game_started:
         await broadcast_game_state(game_id, {
@@ -409,12 +439,11 @@ async def join_game_by_code(request: JoinGameByCodeRequest, current_user: dict =
 
 
 @router.get("/api/games/{game_id}/can-rejoin/{player_name}")
-async def can_rejoin_game(game_id: str, player_name: str, current_user: dict = Depends(get_current_user)):
+async def can_rejoin_game(game_id: str, player_name: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Check if a player can rejoin a game by name"""
-    if game_id not in games:
+    game = get_game(db, game_id)
+    if not game:
         raise HTTPException(status_code=404, detail="Game not found")
-    
-    game = games[game_id]
     
     # Check if there's a disconnected player with this name
     if game_id in disconnected_players:
@@ -434,12 +463,11 @@ async def can_rejoin_game(game_id: str, player_name: str, current_user: dict = D
 
 
 @router.post("/api/games/{game_id}/rejoin")
-async def rejoin_game(game_id: str, current_user: dict = Depends(get_current_user)):
+async def rejoin_game(game_id: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Rejoin a game by player name (for disconnected players)"""
-    if game_id not in games:
+    game = get_game(db, game_id)
+    if not game:
         raise HTTPException(status_code=404, detail="Game not found")
-    
-    game = games[game_id]
     player_name = current_user.username
     
     # Check if there's a disconnected player with this name
@@ -476,6 +504,9 @@ async def rejoin_game(game_id: str, current_user: dict = Depends(get_current_use
     # Remove from disconnected players
     del disconnected_players[game_id][disconnected_player_id]
     
+    # Save game state to database
+    save_game(db, game_id)
+    
     # Broadcast the reconnection
     await broadcast_game_state(game_id, {
         "type": "player_rejoined",
@@ -493,9 +524,10 @@ async def rejoin_game(game_id: str, current_user: dict = Depends(get_current_use
 
 
 @router.get("/api/games/{game_id}/session/{player_name}")
-async def check_player_session(game_id: str, player_name: str, current_user: dict = Depends(get_current_user)):
+async def check_player_session(game_id: str, player_name: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Check if a player has an active session in this game"""
-    if game_id not in games:
+    game = get_game(db, game_id)
+    if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     
     # Check if player has an active session
@@ -516,7 +548,7 @@ async def check_player_session(game_id: str, player_name: str, current_user: dic
         
         if not can_rejoin:
             # Check if they're currently active in the game
-            for player in games[game_id].players:
+            for player in game.players:
                 if player.name == player_name and player.id in active_connections:
                     can_rejoin = True
                     message = f"Found active session for '{player_name}' - already connected"
@@ -530,26 +562,27 @@ async def check_player_session(game_id: str, player_name: str, current_user: dic
 
 
 @router.post("/api/games/{game_id}/start")
-async def start_game(game_id: str, current_user: dict = Depends(get_current_user)):
+async def start_game(game_id: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Start the game"""
-    if game_id not in games:
+    game = get_game(db, game_id)
+    if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     
-    game = games[game_id]
     if len(game.players) != 2:
         raise HTTPException(status_code=400, detail="Need exactly 2 players to start")
     
     game.start_game()
+    save_game(db, game_id)
     return {"message": "Game started successfully"}
 
 
 @router.post("/api/games/{game_id}/play")
-async def play_card(game_id: str, request: PlayCardRequest, current_user: dict = Depends(get_current_user)):
+async def play_card(game_id: str, request: PlayCardRequest, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Play a card"""
-    if game_id not in games:
+    game = get_game(db, game_id)
+    if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     
-    game = games[game_id]
     player_index = next((i for i, p in enumerate(game.players) if p.id == request.player_id), None)
     
     if player_index is None:
@@ -557,18 +590,19 @@ async def play_card(game_id: str, request: PlayCardRequest, current_user: dict =
     
     try:
         result = game.play_card(player_index, request.card_index, request.new_color)
+        save_game(db, game_id)
         return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/api/games/{game_id}/draw")
-async def draw_card(game_id: str, request: DrawCardRequest, current_user: dict = Depends(get_current_user)):
+async def draw_card(game_id: str, request: DrawCardRequest, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Draw a card"""
-    if game_id not in games:
+    game = get_game(db, game_id)
+    if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     
-    game = games[game_id]
     player_index = next((i for i, p in enumerate(game.players) if p.id == request.player_id), None)
     
     if player_index is None:
@@ -578,18 +612,18 @@ async def draw_card(game_id: str, request: DrawCardRequest, current_user: dict =
     if card:
         # Move to next player after drawing
         game._next_player()
+        save_game(db, game_id)
         return {"card": card, "next_player": game.current_player_index}
     else:
         raise HTTPException(status_code=400, detail="Cannot draw card")
 
 
 @router.post("/api/games/{game_id}/reclaim-slot")
-async def reclaim_slot(game_id: str, request: ReclaimSlotRequest, current_user: dict = Depends(get_current_user)):
+async def reclaim_slot(game_id: str, request: ReclaimSlotRequest, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Allow original player to reclaim their slot"""
-    if game_id not in games:
+    game = get_game(db, game_id)
+    if not game:
         raise HTTPException(status_code=404, detail="Game not found")
-    
-    game = games[game_id]
     
     # Check if we have the disconnected player stored
     if game_id not in disconnected_players or request.original_player_id not in disconnected_players[game_id]:
@@ -622,6 +656,9 @@ async def reclaim_slot(game_id: str, request: ReclaimSlotRequest, current_user: 
     # Remove from disconnected players
     del disconnected_players[game_id][request.original_player_id]
     
+    # Save game state to database
+    save_game(db, game_id)
+    
     # Broadcast the reclamation
     await broadcast_game_state(game_id, {
         "type": "player_reclaimed_slot",
@@ -633,9 +670,10 @@ async def reclaim_slot(game_id: str, request: ReclaimSlotRequest, current_user: 
 
 
 @router.get("/api/games/{game_id}/can-reclaim/{original_player_id}")
-async def can_reclaim_slot(game_id: str, original_player_id: str, current_user: dict = Depends(get_current_user)):
+async def can_reclaim_slot(game_id: str, original_player_id: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Check if a player can reclaim their slot"""
-    if game_id not in games:
+    game = get_game(db, game_id)
+    if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     
     # Check if we have the disconnected player stored
@@ -643,7 +681,7 @@ async def can_reclaim_slot(game_id: str, original_player_id: str, current_user: 
         return {"can_reclaim": False, "reason": "No disconnected player found to restore"}
     
     # Check if the player's original slot is available
-    for i, player in enumerate(games[game_id].players):
+    for i, player in enumerate(game.players):
         if player.id == original_player_id:
             # Found the player's slot, check if it's available
             if player.id not in active_connections:
@@ -659,16 +697,21 @@ async def can_reclaim_slot(game_id: str, original_player_id: str, current_user: 
 
 
 @router.delete("/api/games/{game_id}")
-async def delete_game(game_id: str, current_user: dict = Depends(get_current_user)):
+async def delete_game(game_id: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     """Delete a game"""
-    if game_id not in games:
+    game = get_game(db, game_id)
+    if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     
-    game = games[game_id]
     game_code = game.game_code
     
+    # Remove from database
+    from game_storage import delete_game_from_db
+    delete_game_from_db(db, game_id)
+    
     # Remove game from dictionaries
-    del games[game_id]
+    if game_id in games:
+        del games[game_id]
     if game_code in games_by_code:
         del games_by_code[game_code]
     
