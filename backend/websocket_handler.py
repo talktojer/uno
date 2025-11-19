@@ -207,11 +207,37 @@ async def game_websocket_endpoint(websocket: WebSocket, game_id: str, player_id:
                             game._next_player()
                             # Save game state to database
                             save_game(db, game_id)
-                            await broadcast_game_state(game_id, {
-                                "type": "card_drawn",
-                                "card": card.model_dump(),
-                                "next_player": game.current_player_index
-                            })
+                            
+                            # Get updated game state
+                            game_state = game.get_game_state()
+                            
+                            # Send personalized messages: card details only to the player who drew
+                            for player in game.players:
+                                if player.id in active_connections:
+                                    try:
+                                        if player.id == player_id:
+                                            # Send full card details to the player who drew
+                                            message_to_send = {
+                                                "type": "card_drawn",
+                                                "game_state": game_state.model_dump(),
+                                                "card": card.model_dump(),
+                                                "player_id": player_id,
+                                                "next_player": game.current_player_index
+                                            }
+                                        else:
+                                            # Send generic message to opponents (no card details)
+                                            message_to_send = {
+                                                "type": "card_drawn",
+                                                "game_state": game_state.model_dump(),
+                                                "player_id": player_id,
+                                                "next_player": game.current_player_index
+                                            }
+                                        await active_connections[player.id].send_text(json.dumps(message_to_send))
+                                    except Exception as e:
+                                        print(f"Error sending to player {player.id}: {e}")
+                                        # Remove dead connections
+                                        if player.id in active_connections:
+                                            del active_connections[player.id]
                         else:
                             await websocket.send_text(json.dumps({
                                 "type": "error",
