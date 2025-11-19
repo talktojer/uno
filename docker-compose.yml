@@ -50,8 +50,6 @@ services:
       - POSTGRES_DB=uno_db
       - POSTGRES_USER=uno_user
       - POSTGRES_PASSWORD=uno_pass
-    ports:
-      - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
