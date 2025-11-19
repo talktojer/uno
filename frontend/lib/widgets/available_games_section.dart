@@ -40,23 +40,26 @@ class AvailableGamesSection extends StatelessWidget {
 
   bool _isUserInGame(String gameId, String playerName) {
     try {
+      // Check if there's a session token for this game and player
+      // Format: uno_session_{gameId}_{playerName}
+      final expectedKey = 'uno_session_${gameId}_$playerName';
+      if (html.window.localStorage.containsKey(expectedKey)) {
+        return true;
+      }
+      
+      // Fallback: check if there's any session token for this game
+      // (in case player name doesn't match exactly)
       final keys = html.window.localStorage.keys;
       for (final key in keys) {
-        if (key.startsWith('uno_session_')) {
-          final parts = key.split('_');
-          if (parts.length >= 4) {
-            final storedGameId = parts[2];
-            final storedPlayerName = parts.sublist(3).join('_');
-            if (storedGameId == gameId && storedPlayerName == playerName) {
-              return true;
-            }
-          }
+        if (key.startsWith('uno_session_${gameId}_')) {
+          return true;
         }
       }
+      return false;
     } catch (e) {
       print('Error checking if user is in game: $e');
+      return false;
     }
-    return false;
   }
 
   void _rejoinGame(BuildContext context, String gameCode, String gameId) {
@@ -170,10 +173,9 @@ class AvailableGamesSection extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         // Show rejoin button if user is in the game and it's in progress
-                        if ((game['status'] == 'in_progress' ||
-                                game['status'] == 'waiting_for_rejoin' ||
-                                game['status'] == 'full') &&
-                            game['game_id'] != null &&
+                        // Show for any game that has started (game_started == true) and user has a session token
+                        if (game['game_id'] != null &&
+                            game['game_started'] == true &&
                             _isUserInGame(game['game_id'], playerName)) ...[
                           IconButton(
                             icon: const Icon(Icons.replay, color: Colors.orange),
