@@ -136,9 +136,10 @@ class _HomeScreenState extends State<HomeScreen> {
         _gameId = gameId;
       });
 
-      // No need to check for existing player name since we're using authentication
-
-      _showRejoinOrJoinDialog(gameCode, gameId);
+      // Automatically join or rejoin using the unified backend endpoint.
+      // The backend will determine whether this user should rejoin an existing slot
+      // or join as a new player based on their prior participation.
+      await _joinGameDirectly(gameCode);
     } on ApiException {
       if (widget.initialGameCode != null) {
         _showInvalidGameCodeDialog(gameCode);
@@ -226,8 +227,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // Game action methods
   Future<void> _createGame() async {
     if (_currentUsername == null) {
-      HomeScreenUtils.showWarningSnackBar(
-          context, 'Please log in first');
+      HomeScreenUtils.showWarningSnackBar(context, 'Please log in first');
       return;
     }
 
@@ -257,14 +257,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _joinGameByCode() async {
     if (_gameCodeController.text.isEmpty) {
-      HomeScreenUtils.showWarningSnackBar(
-          context, 'Please enter a game code');
+      HomeScreenUtils.showWarningSnackBar(context, 'Please enter a game code');
       return;
     }
 
     if (_currentUsername == null) {
-      HomeScreenUtils.showWarningSnackBar(
-          context, 'Please log in first');
+      HomeScreenUtils.showWarningSnackBar(context, 'Please log in first');
       return;
     }
 
@@ -283,8 +281,7 @@ class _HomeScreenState extends State<HomeScreen> {
             data['game_id'], _currentUsername!, data['session_token']);
       }
 
-      _navigateToGame(
-          data['game_id'], data['player_id'], _currentUsername!);
+      _navigateToGame(data['game_id'], data['player_id'], _currentUsername!);
     } on ApiException catch (e) {
       _handleJoinError(e);
     } finally {
@@ -296,8 +293,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _joinGameDirectly(String gameCode) async {
     if (_currentUsername == null) {
-      HomeScreenUtils.showWarningSnackBar(
-          context, 'Please log in first');
+      HomeScreenUtils.showWarningSnackBar(context, 'Please log in first');
       return;
     }
 
@@ -379,7 +375,8 @@ class _HomeScreenState extends State<HomeScreen> {
           context, data['message'] ?? 'Game deleted successfully');
       // Game list will auto-refresh via WebSocket updates
     } on ApiException catch (e) {
-      HomeScreenUtils.showErrorSnackBar(context, 'Error deleting game: ${e.message}');
+      HomeScreenUtils.showErrorSnackBar(
+          context, 'Error deleting game: ${e.message}');
     } catch (e) {
       HomeScreenUtils.showErrorSnackBar(context, 'Error deleting game: $e');
     }
@@ -436,23 +433,24 @@ class _HomeScreenState extends State<HomeScreen> {
           if (parts.length >= 4) {
             final gameId = parts[2];
             final playerName = parts.sublist(3).join('_');
-            
+
             // Only check games for the current user
             if (playerName == _currentUsername) {
               try {
                 // Check if user has an active slot in this game
                 final slotData = await ApiService.getMySlot(gameId);
-                
+
                 if (slotData['has_slot'] == true) {
                   // Get game state to check if game is in progress
                   try {
                     final gameState = await ApiService.getGameState(gameId);
-                    
+
                     // Only show rejoin button if game has started and is not over
-                    if (gameState['game_started'] == true && gameState['winner'] == null) {
+                    if (gameState['game_started'] == true &&
+                        gameState['winner'] == null) {
                       // Get game code
                       final gameCode = gameState['game_code'];
-                      
+
                       setState(() {
                         _activeGameId = gameId;
                         _activeGameCode = gameCode;
@@ -474,7 +472,7 @@ class _HomeScreenState extends State<HomeScreen> {
           }
         }
       }
-      
+
       // No active game found
       setState(() {
         _activeGameId = null;
@@ -491,7 +489,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _rejoinActiveGame() async {
-    if (_activeGameId == null || _activePlayerId == null || _currentUsername == null) {
+    if (_activeGameId == null ||
+        _activePlayerId == null ||
+        _currentUsername == null) {
       HomeScreenUtils.showErrorSnackBar(context, 'Unable to rejoin game');
       return;
     }
@@ -504,7 +504,7 @@ class _HomeScreenState extends State<HomeScreen> {
       // Use the existing join endpoint which will automatically rejoin if user owns a slot
       if (_activeGameCode != null) {
         final data = await ApiService.joinGameByCode(_activeGameCode!);
-        
+
         if (data['session_token'] != null) {
           ApiService.storeSessionToken(
               data['game_id'], _currentUsername!, data['session_token']);
@@ -515,9 +515,9 @@ class _HomeScreenState extends State<HomeScreen> {
         // Fallback: try to get game code from game state
         final gameState = await ApiService.getGameState(_activeGameId!);
         final gameCode = gameState['game_code'];
-        
+
         final data = await ApiService.joinGameByCode(gameCode);
-        
+
         if (data['session_token'] != null) {
           ApiService.storeSessionToken(
               data['game_id'], _currentUsername!, data['session_token']);
@@ -526,7 +526,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _navigateToGame(data['game_id'], data['player_id'], _currentUsername!);
       }
     } on ApiException catch (e) {
-      HomeScreenUtils.showErrorSnackBar(context, 'Error rejoining game: ${e.message}');
+      HomeScreenUtils.showErrorSnackBar(
+          context, 'Error rejoining game: ${e.message}');
       // Clear active game state if rejoin failed
       setState(() {
         _activeGameId = null;
@@ -552,7 +553,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final data = await ApiService.joinGameByCode(gameCode);
-      
+
       if (data['session_token'] != null) {
         ApiService.storeSessionToken(
             data['game_id'], _currentUsername!, data['session_token']);
@@ -560,14 +561,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
       _navigateToGame(data['game_id'], data['player_id'], _currentUsername!);
     } on ApiException catch (e) {
-      HomeScreenUtils.showErrorSnackBar(context, 'Error rejoining game: ${e.message}');
+      HomeScreenUtils.showErrorSnackBar(
+          context, 'Error rejoining game: ${e.message}');
     } finally {
       setState(() {
         _isLoading = false;
       });
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -588,7 +589,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (mounted) {
                   Navigator.pushReplacement(
                     context,
-                    MaterialPageRoute(builder: (context) => const LoginScreen()),
+                    MaterialPageRoute(
+                        builder: (context) => const LoginScreen()),
                   );
                 }
               }
@@ -638,7 +640,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     // Welcome message
                     if (_currentUsername != null)
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 8),
                         decoration: BoxDecoration(
                           color: Colors.white.withOpacity(0.2),
                           borderRadius: BorderRadius.circular(20),
@@ -711,14 +714,17 @@ class _HomeScreenState extends State<HomeScreen> {
                             SizedBox(
                               width: double.infinity,
                               child: ElevatedButton.icon(
-                                onPressed: _isLoading ? null : _rejoinActiveGame,
+                                onPressed:
+                                    _isLoading ? null : _rejoinActiveGame,
                                 icon: _isLoading
                                     ? const SizedBox(
                                         width: 20,
                                         height: 20,
                                         child: CircularProgressIndicator(
                                           strokeWidth: 2,
-                                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                          valueColor:
+                                              AlwaysStoppedAnimation<Color>(
+                                                  Colors.white),
                                         ),
                                       )
                                     : const Icon(Icons.replay, size: 24),
@@ -732,7 +738,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Colors.orange,
                                   foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(vertical: 16),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 16),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12),
                                   ),

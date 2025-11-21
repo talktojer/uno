@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:html' as html;
+import '../config/app_config.dart';
+import '../services/storage_service.dart';
 
 class AvailableGamesSection extends StatelessWidget {
   final List<Map<String, dynamic>> availableGames;
@@ -22,11 +24,18 @@ class AvailableGamesSection extends StatelessWidget {
   });
 
   void _copyGameCode(BuildContext context, String gameCode) {
+    if (gameCode.isEmpty) return;
+
+    // Copy full game URL to clipboard while also priming the join form
+    final url = '$baseUrl/$gameCode';
+    StorageService.copyToClipboard(url);
+
     gameCodeController.text = gameCode;
     onActionSelected('join');
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Game code $gameCode copied to join form'),
+        content: Text('Game URL copied to clipboard! ($url)'),
         behavior: SnackBarBehavior.floating,
         backgroundColor: Colors.blue,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
